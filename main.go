@@ -361,11 +361,11 @@ func (s *studio) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.failure = ""
 		s.progress = 0
 		s.message = "Generating DTM contours"
-		g, z, revision := s.grid, s.result.DTM, s.edits.Revision
+		g, z, revision, flags := s.grid, s.result.DTM, s.edits.Revision, s.result.Flags
 		s.Unlock()
 		go func() {
 			defer cancel()
-			c, e := generateContours(ctx, g, z, p, revision, func(n int, m string) { s.Lock(); s.progress = n; s.message = m; s.Unlock() })
+			c, e := generateContours(ctx, g, z, p, revision, func(n int, m string) { s.Lock(); s.progress = n; s.message = m; s.Unlock() }, flags)
 			s.Lock()
 			defer s.Unlock()
 			s.busy = false
@@ -404,6 +404,15 @@ func (s *studio) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/csv")
 		w.Header().Set("Content-Disposition", `attachment; filename="contours.csv"`)
 		_, _ = w.Write(b)
+	case r.URL.Path == "/api/contours/report" && r.Method == "GET":
+		s.Lock()
+		defer s.Unlock()
+		if s.contours == nil {
+			http.Error(w, "generate contours first", 409)
+			return
+		}
+		w.Header().Set("Content-Disposition", `attachment; filename="contour-report.json"`)
+		reply(w, contourReport(s.grid, s.contours))
 	case r.URL.Path == "/api/contours/surface" && r.Method == "GET":
 		s.Lock()
 		c := s.contours
@@ -524,7 +533,7 @@ func (s *studio) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Disposition", `attachment; filename="terrain-report.json"`)
-		reply(w, map[string]any{"input": s.name, "width": s.grid.W, "height": s.grid.H, "parameters": s.params, "counts": s.result.Counts, "edits": s.edits.Audit, "method": s.resultMethod, "flags": "1 low, 2 high, 4 spike, 8 non-ground, 16 original NoData, 32 filled output, 64 manual edit, 128 hydroflatten; bitwise combined", "fill_original_nodata_in_outputs": s.params.FillOutput})
+		reply(w, map[string]any{"input": s.name, "width": s.grid.W, "height": s.grid.H, "parameters": s.params, "counts": s.result.Counts, "edits": s.edits.Audit, "method": s.resultMethod, "flags": "1 low, 2 high, 4 spike, 8 non-ground, 16 original NoData, 32 filled output, 64 manual edit, 128 hydroflatten; bitwise combined", "fill_original_nodata_in_outputs": s.params.FillOutput, "contours": contourReport(s.grid, s.contours)})
 	default:
 		http.NotFound(w, r)
 	}
@@ -563,7 +572,7 @@ func (s *studio) state() map[string]any {
 	m["editing"] = map[string]any{"revision": s.edits.Revision, "undo": len(s.edits.Undo), "redo": len(s.edits.Redo), "audit": s.edits.Audit}
 	m["unsavedEdits"] = s.result != nil && s.result.Counts["manual"] > 0 && s.edits.Revision != s.edits.SavedRevision
 	if s.contours != nil {
-		m["contours"] = map[string]any{"revision": s.contours.Revision, "parameters": s.contours.Params, "lines": len(s.contours.Lines), "segments": s.contours.Segments, "removedSmallLoops": s.contours.RemovedSmallLoops}
+		m["contours"] = map[string]any{"revision": s.contours.Revision, "parameters": s.contours.Params, "lines": len(s.contours.Lines), "segments": s.contours.Segments, "removedSmallLoops": s.contours.RemovedSmallLoops, "removedShortLines": s.contours.RemovedShortLines, "quality": s.contours.Quality}
 	} else {
 		m["contours"] = nil
 	}

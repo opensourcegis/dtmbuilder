@@ -11,20 +11,31 @@ import (
 )
 
 type ContourParams struct {
-	Interval       float64 `json:"interval"`
-	Base           float64 `json:"base"`
-	IndexEvery     int     `json:"indexEvery"`
-	AverageFactor  int     `json:"averageFactor"`
-	SmoothRadius   int     `json:"smoothRadius"`
-	RegionalRadius int     `json:"regionalRadius"`
-	MinLength      float64 `json:"minLength"`
-	MinArea        float64 `json:"minArea"`
+	Interval         float64 `json:"interval"`
+	Base             float64 `json:"base"`
+	IndexEvery       int     `json:"indexEvery"`
+	AverageFactor    int     `json:"averageFactor"`
+	SmoothRadius     int     `json:"smoothRadius"`
+	RegionalRadius   int     `json:"regionalRadius"`
+	MinLength        float64 `json:"minLength"`
+	MinArea          float64 `json:"minArea"`
+	ElevationQuantum float64 `json:"elevationQuantum"`
+	ElevationUnit    string  `json:"elevationUnit"`
+	PreserveHydro    bool    `json:"preserveHydro"`
 }
 
 func defaultContourParams() ContourParams {
-	return ContourParams{Interval: 1, IndexEvery: 5, AverageFactor: 1, MinArea: 50}
+	return ContourParams{Interval: 1, IndexEvery: 5, AverageFactor: 1, MinArea: 50, PreserveHydro: true}
 }
 func (p ContourParams) validate() error {
+	if !validNumber(p.ElevationQuantum) || p.ElevationQuantum < 0 || p.ElevationQuantum > 1e8 {
+		return errors.New("elevation rounding step must be finite and between 0 and 100,000,000 height units; 0 disables rounding")
+	}
+	switch p.ElevationUnit {
+	case "", "native", "m", "ft", "US ft":
+	default:
+		return errors.New("elevation units must be unspecified, m, ft, or US ft; declaring units does not convert elevations")
+	}
 	if !validNumber(p.Interval) || p.Interval < .0001 || !validNumber(p.Base) || math.Abs(p.Base) > 1e8 || p.IndexEvery < 1 || p.IndexEvery > 100 || p.AverageFactor < 1 || p.AverageFactor > 100 || p.SmoothRadius < 0 || p.SmoothRadius > 5 || p.RegionalRadius < 0 || p.RegionalRadius > 100 || !validNumber(p.MinLength) || p.MinLength < 0 || !validNumber(p.MinArea) || p.MinArea < 0 {
 		return errors.New("invalid contour settings: interval ≥0.0001, index 1–100, averaging 1–100, smoothing radius 0–5")
 	}
@@ -38,12 +49,14 @@ type ContourLine struct {
 	AreaM2    *float64    `json:"areaM2,omitempty"`
 }
 type ContourSet struct {
-	Params            ContourParams `json:"parameters"`
-	Revision          int           `json:"revision"`
-	Lines             []ContourLine `json:"lines"`
-	Surface           *Grid         `json:"-"`
-	Segments          int           `json:"segments"`
-	RemovedSmallLoops int           `json:"removedSmallLoops"`
+	Params            ContourParams  `json:"parameters"`
+	Revision          int            `json:"revision"`
+	Lines             []ContourLine  `json:"lines"`
+	Surface           *Grid          `json:"-"`
+	Segments          int            `json:"segments"`
+	RemovedSmallLoops int            `json:"removedSmallLoops"`
+	RemovedShortLines int            `json:"removedShortLines"`
+	Quality           ContourQuality `json:"quality"`
 }
 type contourNodeKey struct {
 	level int64
@@ -55,7 +68,20 @@ type contourNode struct {
 }
 type contourSegment struct{ a, b int }
 
-func contourSurface(ctx context.Context, g *Grid, z []float32, p ContourParams) (*Grid, error) {
+func contourSurface(ctx context.Context, g *Grid, z []float32, p ContourParams, masks ...[]float32) (*Grid, error) {
+	if err := p.validate(); err != nil {
+		return nil, err
+	}
+	if g == nil || g.W < 2 || g.H < 2 || len(z) != g.W*g.H {
+		return nil, errors.New("contouring requires a matching elevation grid of at least 2×2 cells")
+	}
+	var flags []float32
+	if len(masks) > 0 {
+		flags = masks[0]
+	}
+	if len(flags) != 0 && len(flags) != len(z) {
+		return nil, errors.New("water flags do not match the elevation grid")
+	}
 	f := p.AverageFactor
 	w, h := g.W/f, g.H/f
 	if w < 2 || h < 2 {
@@ -63,6 +89,8 @@ func contourSurface(ctx context.Context, g *Grid, z []float32, p ContourParams) 
 	}
 	a := make([]float32, w*h)
 	nan := float32(math.NaN())
+	// Constraints apply to the separate contour grid, never the edited DTM.
+	water := map[int]float32{}
 	for y := 0; y < h; y++ {
 		if e := ctx.Err(); e != nil {
 			return nil, e
@@ -70,20 +98,59 @@ func contourSurface(ctx context.Context, g *Grid, z []float32, p ContourParams) 
 		for x := 0; x < w; x++ {
 			sum := 0.0
 			ok := true
+			waterLevel, hasWater := float32(0), false
 			for yy := y * f; yy < (y+1)*f; yy++ {
 				for xx := x * f; xx < (x+1)*f; xx++ {
-					v := z[yy*g.W+xx]
+					j := yy*g.W + xx
+					v := z[j]
 					if !valid(v) {
 						ok = false
 					}
 					sum += float64(v)
+					if p.PreserveHydro && len(flags) > 0 && int(flags[j])&128 != 0 && valid(v) {
+						if hasWater && waterLevel != v {
+							return nil, errors.New("an averaging block contains different hydroflattened levels; reduce the block average factor")
+						}
+						waterLevel, hasWater = v, true
+					}
 				}
 			}
 			if ok {
 				a[y*w+x] = float32(sum / float64(f*f))
+				if hasWater {
+					a[y*w+x] = waterLevel
+					water[y*w+x] = waterLevel
+				}
 			} else {
 				a[y*w+x] = nan
 			}
+		}
+	}
+	// USGS SIR 2012–5167, p. 21: round elevations, then filter. The step
+	// uses declared SOURCE height units; horizontal CRS units are not evidence
+	// of vertical units. float64 division avoids overflowing a float32 scale.
+	if p.ElevationQuantum > 0 {
+		for i, v := range a {
+			if i%4096 == 0 {
+				if e := ctx.Err(); e != nil {
+					return nil, e
+				}
+			}
+			if !valid(v) {
+				continue
+			}
+			if _, fixed := water[i]; fixed {
+				continue
+			}
+			ratio := float64(v) / p.ElevationQuantum
+			if !validNumber(ratio) || math.Abs(ratio) > 1e15 {
+				return nil, errors.New("rounding step is too small for the elevation range")
+			}
+			rounded := float32(math.Round(ratio) * p.ElevationQuantum)
+			if !valid(rounded) {
+				return nil, errors.New("rounded elevation exceeds float32 output range")
+			}
+			a[i] = rounded
 		}
 	}
 	if p.SmoothRadius > 0 {
@@ -114,6 +181,9 @@ func contourSurface(ctx context.Context, g *Grid, z []float32, p ContourParams) 
 			}
 		}
 		a = out
+		for i, v := range water {
+			a[i] = v
+		}
 	}
 	if p.RegionalRadius > 0 {
 		for pass := 0; pass < 3; pass++ {
@@ -121,6 +191,9 @@ func contourSurface(ctx context.Context, g *Grid, z []float32, p ContourParams) 
 			a, e = regionalMean(ctx, a, w, h, p.RegionalRadius)
 			if e != nil {
 				return nil, e
+			}
+			for i, v := range water {
+				a[i] = v
 			}
 		}
 	}
@@ -158,15 +231,18 @@ func contourSurface(ctx context.Context, g *Grid, z []float32, p ContourParams) 
 	return &Grid{W: w, H: h, Z: a, Tags: tags, Order: g.Order, PixelSize: g.PixelSize * float64(f)}, nil
 }
 
-func generateContours(ctx context.Context, g *Grid, z []float32, p ContourParams, revision int, progress func(int, string)) (*ContourSet, error) {
+func generateContours(ctx context.Context, g *Grid, z []float32, p ContourParams, revision int, progress func(int, string), masks ...[]float32) (*ContourSet, error) {
 	if e := p.validate(); e != nil {
 		return nil, e
+	}
+	if g == nil {
+		return nil, errors.New("load an elevation raster first")
 	}
 	if p.MinArea > 0 && areaScaleM2(g) == 0 {
 		return nil, errors.New("the square-metre area filter requires a projected raster with recognized metre/foot units; reproject the DTM, or set minimum enclosed area to 0 for unreferenced/angular data")
 	}
 	progress(5, "Preparing contour surface")
-	surface, e := contourSurface(ctx, g, z, p)
+	surface, e := contourSurface(ctx, g, z, p, masks...)
 	if e != nil {
 		return nil, e
 	}
@@ -330,6 +406,7 @@ func generateContours(ctx context.Context, g *Grid, z []float32, p ContourParams
 	kept := make([]ContourLine, 0, len(lines))
 	keptSegments := 0
 	removedSmallLoops := 0
+	removedShortLines := 0
 	for _, line := range lines {
 		if area, closed := contourAreaM2(g, line); closed && areaScaleM2(g) > 0 {
 			line.AreaM2 = &area
@@ -341,12 +418,17 @@ func generateContours(ctx context.Context, g *Grid, z []float32, p ContourParams
 			}
 		}
 		if p.MinLength > 0 && contourLength(g, line) < p.MinLength {
+			removedShortLines++
 			continue
 		}
 		kept = append(kept, line)
 		keptSegments += len(line.Points) - 1
 	}
-	return &ContourSet{Params: p, Revision: revision, Lines: kept, Surface: surface, Segments: keptSegments, RemovedSmallLoops: removedSmallLoops}, nil
+	quality, e := contourQuality(ctx, g, z, surface, p, masks...)
+	if e != nil {
+		return nil, e
+	}
+	return &ContourSet{Params: p, Revision: revision, Lines: kept, Surface: surface, Segments: keptSegments, RemovedSmallLoops: removedSmallLoops, RemovedShortLines: removedShortLines, Quality: quality}, nil
 }
 
 func areaScaleM2(g *Grid) float64 {

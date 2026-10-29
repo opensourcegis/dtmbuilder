@@ -18,3 +18,8 @@ Terrain Studio Regional.exe
 Terrain Studio Area Filter.exe
 .tmp/
 *.exe.WebView2/
+
+# Generated builds and visual-check output
+dist/
+*-preview.png
+node_modules/

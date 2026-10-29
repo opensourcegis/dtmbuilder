@@ -1,15 +1,16 @@
 # Terrain Studio GIS
 
-Double-click **Terrain Studio Area Filter.exe** or **Start-Terrain-Studio.cmd** for the Windows
+Build with **Build-Terrain-Studio.ps1**, then double-click **dist/Terrain-Studio.exe**
+or **Start-Terrain-Studio.cmd** for the Windows
 desktop application. It has a light interface, grouped parameters, native Windows
 Open/Save dialogs, and an embedded terrain viewer. No separate browser or local
 TCP server is started. Reopening the desktop EXE brings its existing window forward.
-Windows WebView2 is required (already installed on this computer).
+Windows WebView2 is required on the computer running the desktop application.
 Processing and GeoTIFF I/O run in Go without Python, GDAL or npm runtime dependencies.
-The original `terrain-go.exe` is an older browser build; `Terrain Studio.exe`,
-`Terrain Studio Navigation.exe` and `Terrain Studio GIS.exe` are previous versions. This version can
-run alongside them, preserving access to existing unsaved results. Subsequent GIS
-launches focus the existing GIS window.
+The source was imported from the supplied terrain-go archive. Compiled builds,
+screenshots, logs and process-ID files are generated artifacts and are not checked
+in. GitHub Actions tests Linux and Windows and publishes downloadable build
+artifacts for each successful workflow run. Local outputs go in `dist/`.
 
 1. Open a single-band elevation GeoTIFF or choose **Try demonstration**.
 2. Choose a preset and adjust cleanup and terrain controls.
@@ -18,6 +19,55 @@ launches focus the existing GIS window.
    to repeat a configuration. All jobs start from the original input.
 
 ## GIS workspace and manual editing
+
+
+### USGS-inspired contour surface treatment
+
+The **USGS-inspired · round then filter** preset implements an initial part of
+[USGS SIR 2012–5167](https://pubs.usgs.gov/sir/2012/5167/): round elevation values
+before a 3×3 focal mean to reduce tiny oscillating contours on nearly flat terrain
+(pp. 18–21). It runs on a separate contour surface, leaving the input and edited
+DTM unchanged. It retains the input resolution and disables size-based contour
+removal so real small landforms are not hidden automatically.
+
+1. Open or prepare a DTM. Set the required contour interval and base.
+2. In **Contours**, declare the actual **source elevation units**. This records
+   units; it does not convert the raster. Horizontal CRS units do not establish
+   vertical units.
+3. Select **USGS-inspired · round then filter**. The rounding step becomes
+   0.03048 for metre elevations, 0.1 for international feet, or the equivalent in
+   US survey feet. If height units are unspecified, rounding stays disabled;
+   enter a suitable step explicitly or declare units and reapply the preset.
+4. Compare contours with the normal/full-detail surface. Inspect banks, ridges,
+   embankments and known depressions. A finer grid or smoother line does not prove
+   better ground accuracy. Excessive rounding can remove real relief.
+5. Save the contour surface, CSV/WKT lines and **contour quality report**.
+
+The report records RMS, signed mean and maximum absolute surface change from the
+edited DTM, comparison/masked/cropped cell counts, protected water blocks, removed
+loop/line counts, parameters and limitations. For an averaged grid, each covered
+source cell is compared with its corresponding contour block value. These are
+measures of generalization, **not survey accuracy or vertical RMSE against control**.
+Contour QA is also included in the existing edit/run report. It is invalidated by
+DTM changes and regenerated with the contour result.
+
+**Preserve manually hydroflattened levels** is enabled by default. Cells marked
+by the Hydroflatten tool retain their exact known elevation through rounding,
+focal and regional filtering. When averaging, a block touching water takes that
+water elevation only if the whole block is valid; a block containing conflicting
+water levels is rejected with instructions to reduce averaging. NoData stays
+NoData. A later height-changing non-water edit clears the affected constraint;
+Undo/Redo restores it. Already-level cells selected with Hydroflatten acquire a
+constraint too. Protection belongs to the current editing session; exporting and
+reloading a DTM does not retain its edit flags.
+
+This is an initial report-inspired surface treatment, **not the complete USGS
+workflow**. Automatic hydrography import, stream-direction checks, river grading,
+shoreline routing/buffering, depression classification, tile edge matching,
+TopoToRaster, PAEK line smoothing and vector simplification are not implemented.
+Water levels are not shifted automatically to avoid contour elevations; a quality
+note flags a protected level coincident with a contour. Manual hydroflattening
+alone does not establish conformity to lake polygon boundaries or river channels.
 
 ### Contours and a smoother contour surface
 
@@ -96,7 +146,9 @@ edge blocks are cropped. Any block containing NoData remains NoData. The focal
 mean uses valid neighbours but retains NoData at missing centre cells. Marching
 squares skips cells touching NoData, interpolates crossings between cell centres,
 resolves saddles consistently, and joins segments into polylines. Contours stop
-at raster centre boundaries and NoData gaps. No vector-line smoothing is applied.
+at raster centre boundaries and NoData gaps. Elevation rounding, when enabled, precedes the focal mean; protected manually
+hydroflattened cells are restored after each filtering stage. No vector-line
+smoothing is applied.
 
 Limits: at most 4096 elevation levels and 200,000 traced segments per generation.
 Increase interval/averaging/smoothing if limits are reached. Settings use raster
@@ -235,8 +287,8 @@ Requires Go 1.24 or newer, Wails v2 and Windows WebView2 for the desktop build.
 
 ```powershell
 go test ./...
-go build -tags production -ldflags "-H windowsgui" -o "Terrain Studio Area Filter.exe" .
-& ".\Terrain Studio Area Filter.exe"
+.\Build-Terrain-Studio.ps1
+& ".\dist\Terrain-Studio.exe"
 go run . -input "C:\data\elevation_dsm.tif" -output "C:\data\terrain-results" -config terrain-settings.json
 ```
 
@@ -245,3 +297,23 @@ overwriting them; use a new directory for each run. `-config` is optional.
 Optional browser mode: `go run . -browser -port 8788`; `-open=false` suppresses
 automatic browser launch. Sources: [CNES Bulldozer](https://github.com/CNES/bulldozer),
 [TIFF 6.0 specification](https://download.osgeo.org/geotiff/spec/tiff6.pdf).
+
+
+On Linux (browser interface and CLI; no desktop window):
+
+```sh
+go test ./...
+go build -o dist/terrain-studio .
+./dist/terrain-studio -browser -open=false
+```
+
+The Windows build can also be cross-compiled from Linux without executing it:
+
+```sh
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -tags production -ldflags '-s -w -H windowsgui' -o dist/Terrain-Studio.exe .
+```
+
+A successful cross-build is not validation of Windows dialogs or WebView2 startup.
+The browser interface exercises the shared processing code and UI; Windows desktop
+launch still needs checking on Windows. Building from source needs Go/module
+network access, but end-user raster processing requires neither Python nor npm.

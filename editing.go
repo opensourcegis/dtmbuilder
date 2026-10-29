@@ -281,10 +281,15 @@ func (s *studio) applyEdit(q EditRequest) error {
 			}
 			value = float32(sum / weight)
 		}
-		if !valid(value) || valid(old) && value == old {
+		// A flat cell already at the requested water level still needs a water
+		// constraint, so contour filtering cannot subsequently raise/lower it.
+		newWaterConstraint := q.Tool == "flatten" && int(r.Flags[i])&128 == 0
+		if !valid(value) || valid(old) && value == old && !newWaterConstraint {
 			continue
 		}
 		bits := int(r.Flags[i]) | 64
+		// A later elevation-changing edit replaces the previous water constraint.
+		bits &^= 128
 		if q.Tool == "flatten" {
 			bits |= 128
 		}

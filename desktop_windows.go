@@ -23,7 +23,7 @@ type Desktop struct {
 func runDesktop(s *studio) error {
 	app := &Desktop{s: s}
 	return wails.Run(&options.App{
-		Title: "Terrain Studio GIS", Width: 1550, Height: 1000, MinWidth: 1150, MinHeight: 740,
+		Title: "Terrain Studio GIS · Cartographic", Width: 1550, Height: 1000, MinWidth: 1150, MinHeight: 740,
 		BackgroundColour: &options.RGBA{R: 245, G: 247, B: 249, A: 255},
 		AssetServer:      &assetserver.Options{Handler: s}, Bind: []interface{}{app},
 		OnStartup: func(ctx context.Context) { app.ctx = ctx },
@@ -37,7 +37,7 @@ func runDesktop(s *studio) error {
 			answer, e := wruntime.MessageDialog(ctx, wruntime.MessageDialogOptions{Type: wruntime.QuestionDialog, Title: "Unsaved terrain edits", Message: "Close without saving your manually edited DTM?", Buttons: []string{"Yes", "No"}, DefaultButton: "No", CancelButton: "No"})
 			return e != nil || answer != "Yes"
 		},
-		SingleInstanceLock: &options.SingleInstanceLock{UniqueId: "terrain-studio-gis-area-contours-v6", OnSecondInstanceLaunch: func(options.SecondInstanceData) { wruntime.WindowUnminimise(app.ctx); wruntime.WindowShow(app.ctx) }},
+		SingleInstanceLock: &options.SingleInstanceLock{UniqueId: "terrain-studio-gis-cartographic-v1", OnSecondInstanceLaunch: func(options.SecondInstanceData) { wruntime.WindowUnminimise(app.ctx); wruntime.WindowShow(app.ctx) }},
 		OnShutdown: func(context.Context) {
 			s.Lock()
 			defer s.Unlock()
@@ -99,7 +99,7 @@ func (d *Desktop) Export(layer string) (string, error) {
 	var report []byte
 	if layer == "report" && d.s.result != nil {
 		name = "terrain-report.json"
-		report, _ = json.MarshalIndent(map[string]any{"input": d.s.name, "parameters": d.s.params, "counts": d.s.result.Counts, "edits": d.s.edits.Audit, "method": d.s.resultMethod, "flags": "1 low, 2 high, 4 spike, 8 non-ground, 16 original NoData, 32 filled output, 64 manual edit, 128 hydroflatten; bitwise combined"}, "", "  ")
+		report, _ = json.MarshalIndent(map[string]any{"input": d.s.name, "parameters": d.s.params, "counts": d.s.result.Counts, "edits": d.s.edits.Audit, "method": d.s.resultMethod, "flags": "1 low, 2 high, 4 spike, 8 non-ground, 16 original NoData, 32 filled output, 64 manual edit, 128 hydroflatten; bitwise combined", "contours": contourReport(d.s.grid, d.s.contours)}, "", "  ")
 	}
 	d.s.Unlock()
 	if report == nil && (g == nil || z == nil) {
@@ -204,6 +204,27 @@ func (d *Desktop) ExportContours(surface bool) (string, error) {
 	}
 	if e != nil {
 		return "", e
+	}
+	return path, os.WriteFile(path, b, 0644)
+}
+
+func (d *Desktop) ExportContourReport() (string, error) {
+	d.s.Lock()
+	if d.s.contours == nil || d.s.busy {
+		d.s.Unlock()
+		return "", errors.New("generate contours and wait for processing to finish")
+	}
+	b, e := json.MarshalIndent(contourReport(d.s.grid, d.s.contours), "", "  ")
+	d.s.Unlock()
+	if e != nil {
+		return "", e
+	}
+	path, e := wruntime.SaveFileDialog(d.ctx, wruntime.SaveDialogOptions{Title: "Save contour quality report", DefaultFilename: "contour-report.json", Filters: []wruntime.FileFilter{{DisplayName: "JSON report", Pattern: "*.json"}}})
+	if e != nil || path == "" {
+		return "", e
+	}
+	if !d.confirmOverwrite(path) {
+		return "", nil
 	}
 	return path, os.WriteFile(path, b, 0644)
 }

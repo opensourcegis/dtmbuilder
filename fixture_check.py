@@ -5,8 +5,10 @@ import rasterio
 from rasterio.transform import from_origin
 import subprocess
 import tempfile
+import os
 
 root = Path(__file__).resolve().parent
+executable = Path(os.environ.get('TERRAIN_EXECUTABLE', root / 'dist' / ('Terrain-Studio.exe' if os.name == 'nt' else 'terrain-studio')))
 with tempfile.TemporaryDirectory(dir=root) as tmp:
     tmp = Path(tmp)
     y, x = np.mgrid[:64, :64]
@@ -23,7 +25,7 @@ with tempfile.TemporaryDirectory(dir=root) as tmp:
                            tiled=tiled, blockxsize=16 if tiled else 64, blockysize=16,
                            ENDIANNESS=endian) as ds:
             ds.write(z, 1)
-        run = subprocess.run([str(root/'terrain-go.exe'), '-input', str(src), '-output', str(out)], capture_output=True, text=True)
+        run = subprocess.run([str(executable), '-input', str(src), '-output', str(out)], capture_output=True, text=True)
         if run.returncode:
             raise RuntimeError(f'{label}: {run.stderr}')
         with rasterio.open(out/'dtm.tif') as ds:
