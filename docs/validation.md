@@ -117,7 +117,7 @@ been exercised in this Linux environment. No user GeoTIFF crop or surveyed contr
 points were supplied; no project-specific accuracy improvement is claimed.
 
 Automatic hydrography ingestion, river grading/flow enforcement, shoreline
-routing, PAEK/vector smoothing, depression classification and tile seam matching
+routing, PAEK/vector smoothing, depression classification and buffered AOI processing
 remain further work. See [the complete report audit](report-audit.md). Contour
 pins are session constraints, with an exported audit record; a reloadable
 constraint project is not implemented. This is not the full USGS workflow.

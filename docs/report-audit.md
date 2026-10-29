@@ -1,7 +1,7 @@
 # Audit against USGS Scientific Investigations Report 2012–5167
 
 Reference: Tyler and Greenlee (2012), *Creation of Digital Contours That Approach
- the Characteristics of Cartographic Contours*, 31 pages plus appendixes.
+the Characteristics of Cartographic Contours*, 31 pages with appendixes.
 The supplied PDF is reference material; it is not a set of workspace instructions.
 
 **Conclusion: this application does not implement the entire report.** The
@@ -44,6 +44,56 @@ and US-specific choices that must not be silently applied to other datasets.
 | Reconstruct a surface from contours and flag flowlines near discrepancies over three intervals | 23 | **Missing.** No contour-to-surface or flowline QA stage. |
 | Visually inspect flagged areas, edit input hydrography, regenerate | 23 | **Partial.** Manual DTM/contour-pin editing and automatic regeneration exist. Flag generation and hydrography editing do not. Moving a contour modifies and constrains the DTM; there is no independent vector-only edit that silently disagrees with the terrain. |
 | Combine states/quads, remove coastal zero contours, propagate depression status | 23–24 | **Missing.** No multi-dataset coastal or depression post-processing. Zero contours must not be deleted automatically for inland/negative terrain. |
+| Explicitly join features across quadrangle boundaries | 4 | **Not part of the reported implementation.** The report explicitly says edge-matching and joining across quad boundaries were not attempted. Its 10% processing overlap is a separate, implemented precaution. Cross-dataset feature joining would be an additional application capability. |
+
+## Recheck of suitability for topographic contours
+
+The current application **partly follows the report; it is not an implementation
+of its complete cartographic workflow**. The code and targeted regression tests
+were checked again against the supplied report. The following distinctions matter
+when assessing an actual contour output:
+
+- **The treatment is optional.** The initial "Normal DTM contours" preset has
+  rounding and focal filtering disabled and a 50 m² minimum loop area. To use the
+  implemented report-inspired treatment, first declare source elevation units,
+  then select "USGS-inspired · round then filter". This selects 0.03048 m or
+  0.1 international foot rounding, a 3×3 focal mean and no size filtering. Changing
+  the unit declaration does not convert elevations or automatically reapply that
+  preset; select the preset again after changing units.
+- **Only the operation order and rounding increment are reproduced.** Page 21
+  specifies round-to-tenth-of-a-foot followed by filtering. It does not specify
+  the filter kernel/window there. The application's 3×3 arithmetic mean is an
+  implementation choice, not a verified reproduction of the report's filter.
+  Exact protected water/pin samples are also deliberate departures from uniform
+  rounding/filtering.
+- **Raster smoothing does not provide the reported vector generalization.**
+  The report explicitly simplifies, applies PAEK and simplifies again (pp. 21–22).
+  All three vector stages are absent. Thus contours may retain angular raster
+  detail despite a smoother elevation surface.
+- **Hydrographic correctness is not established by manual flattening.** The app
+  cannot yet guarantee no lake crossings, drainage-aligned reentrants, downhill
+  river surfaces or approximately perpendicular double-line river crossings.
+  Those need the missing hydrographic inputs, conditioning and checks.
+- **Direct contour editing is an application extension.** The report's automatic
+  process edits NHD inputs and regenerates contours (pp. 1, 23). Here, a drag
+  changes the DTM and locks four samples locally. That maintains the local
+  terrain/contour relationship, but does not establish drainage consistency,
+  survey accuracy or the report's full cartographic rules.
+- **Depression and accuracy QA remain incomplete.** Closed loops are not
+  classified as hills or depressions. The QA RMS is a change from the edited DTM,
+  not error against control. No automatic test establishes that the chosen
+  interval is statistically supported, or reproduces the report's two-/three-
+  interval hydrographic discrepancy checks (pp. 4, 21, 23).
+- **Use the source project's CRS and vertical datum.** NAD83/NAVD88, geographic
+  tolerances and US quadrangle dimensions in this report are dataset-specific;
+  they should not be copied to an Indian project. GeoPackage preserves source
+  horizontal coordinates; it does not perform vertical datum conversion.
+
+The next substantive work for closer agreement is hydrographic input and terrain
+conditioning, vector generalization with displacement/topology checks, depression
+classification, buffered AOI processing and hydrographic QA. Independently assess
+representative contours against the DTM, drainage, spot heights and control at the
+intended map scale before treating them as a finished topographic product.
 
 ## Improvements delivered with this audit
 

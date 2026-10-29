@@ -80,6 +80,9 @@ in a DSM.
    actual support must cover the selected filter/interpolation footprint.
    Adjacent windows must share their contour base and interval. Compare seam
    endpoints explicitly rather than assuming overlap guarantees continuity.
+   Explicit cross-quad joining would be an additional capability: the report
+   states on p. 4 that it did not attempt edge-matching or joining features
+   across quad boundaries.
 8. **Export and report.** Provide a GIS vector format carrying CRS, elevation,
    interval, units, index status, and known depression status, plus the
    cartographic GeoTIFF and a processing/QA report. A GeoJSON export must use

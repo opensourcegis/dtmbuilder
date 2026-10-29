@@ -93,7 +93,7 @@ for a future implementation.
 partial and missing stages, with report page references. **The complete USGS
 hydrographic/cartographic workflow is not implemented.** In particular, automatic
 water/river enforcement, PAEK/vector smoothing, depression classification,
-geographic seam matching and hydrographic proximity QA remain missing. A smooth
+buffered AOI processing and hydrographic proximity QA remain missing. A smooth
 appearance or the availability of GeoPackage export does not establish those
 capabilities or surveyed accuracy.
 
