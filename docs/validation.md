@@ -1,11 +1,11 @@
-# Validation of the first cartographic contour changes
+# Validation of terrain, GeoPackage and live contours
 
 Validated on Linux using Go 1.26.10. Source baseline: the uploaded `terrain-go`
 archive; its 20 existing Go tests passed before changes.
 
 ## Completed checks
 
-- **31 Go tests passed**, including the seven cartographic regressions for round-before-filter
+- **38 Go tests passed**, including the seven cartographic regressions for round-before-filter
   order, plateau-noise contours versus meaningful relief, water constraints
   through rounding/focal/regional filters and averaging, constraint history,
   source coverage/change measurements, invalid input/cancellation/empty surfaces,
@@ -40,6 +40,43 @@ The water regression checks that no contour enters the interior of the protected
 flat-water fixture. Neither fixture establishes conformity to arbitrary lake
 boundaries, river channels, or surveyed ground.
 
+## GeoPackage, live editing and incremental refresh
+
+- GeoPackage header/version, required tables, geometry envelopes/WKB, source CRS,
+  attributes, nullable depression classification, SQLite integrity, spatial-index
+  population and seven standard index-maintenance triggers passed Go tests.
+- Offline EPSG definitions, undefined source coordinates, custom projected CRS
+  handling and PixelIsPoint referencing (including averaging) passed tests.
+- Tiled tracing matches the original full-grid marching-squares reference.
+  Incremental updates match full regeneration for averaging factors 1/2, focal
+  radii 0/1/5, regional radii 0/2, NoData, tile boundaries and raster edges.
+- Background jobs allow DTM edits, reuse unaffected tiles and refuse to publish
+  obsolete revisions. Incremental quality counters match a full recount.
+- Contour dragging constrains the DTM at the contour height, survives rounding
+  and smoothing, rejects conflicting edits atomically and supports pin removal
+  and Undo/Redo.
+- A live browser regression exercised direct handle dragging, pinned DTM heights,
+  automatic incremental refresh after polygon editing, conflict rejection,
+  unpin/Undo and GeoPackage download. The regenerated contour passed within
+  0.01 source pixels of the requested pinned location in the fixture.
+- Independent GDAL/Fiona opened the downloaded EPSG:32643 GeoPackage, checked
+  feature geometry/attributes/revision and constraint metadata, then appended a
+  feature to a copy. The spatial index updated correctly through its triggers.
+
+Three-iteration backend benchmarks on this Linux Xeon Platinum 8573C machine:
+
+| Grid/workload | Mean time | Allocated per operation |
+| --- | ---: | ---: |
+| Full contours, 2048×2048 cells | 288 ms | 103 MB |
+| Local contour update, 2048×2048 cells | 112 ms | 37 MB |
+| Local contour update, 4000×4000 cells | 503 ms | 144 MB |
+
+These use a simple slope, 1-unit interval and 3×3 focal mean. Timings exclude
+DTM edit snapshot copying, preview generation, transport, GeoPackage export and
+browser rendering. They are not Windows latency guarantees. Dense/noisy terrain
+can be slower. The 16-million-cell input limit remains; this is an in-memory
+engine and still performs whole-grid quality comparisons and global line joining.
+
 ## Reproduction
 
 ```sh
@@ -52,11 +89,13 @@ go build -o dist/terrain-studio .
 ```
 
 Run optional integration checks in another terminal. They need development-only
-Playwright/Chromium and Python NumPy/Rasterio respectively:
+Playwright/Chromium and Python NumPy/Rasterio/Fiona respectively:
 
 ```sh
 node cartographic_check.mjs
 node brush_check.mjs
+node live_contours_check.mjs
+python geopackage_check.py
 python fixture_check.py
 ```
 
@@ -79,5 +118,6 @@ points were supplied; no project-specific accuracy improvement is claimed.
 
 Automatic hydrography ingestion, river grading/flow enforcement, shoreline
 routing, PAEK/vector smoothing, depression classification and tile seam matching
-remain further work. This change implements an initial report-inspired surface
-treatment, rather than the full USGS production workflow.
+remain further work. See [the complete report audit](report-audit.md). Contour
+pins are session constraints, with an exported audit record; a reloadable
+constraint project is not implemented. This is not the full USGS workflow.

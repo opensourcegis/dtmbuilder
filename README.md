@@ -18,6 +18,85 @@ artifacts for each successful workflow run. Local outputs go in `dist/`.
 4. Save DTM, cleaned DSM, nDSM, flags and a JSON report. Save/load settings
    to repeat a configuration. All jobs start from the original input.
 
+
+## GeoPackage, live contours and constraints
+
+**Save contours (.gpkg)** exports the current complete contour revision as an
+OGC GeoPackage 1.4 file, directly from the Go application. It contains:
+
+- `contours`: source-CRS LineStrings with elevation, index status, contour
+  interval, declared elevation units, revision, area where known, and a NULL
+  depression field until depression classification is implemented.
+- A spatial R-tree index with standard maintenance triggers for subsequent GIS
+  edits. CRS definitions are included from the bundled PROJ/EPSG catalog.
+- `terrain_report`: parameters, surface-change QA, refresh timings and contour
+  elevation constraints. Unknown CRS remains explicitly undefined; projected
+  coordinates are never labelled as EPSG:4326 just because the base datum is WGS84.
+
+CSV/WKT and contour-surface GeoTIFF export remain available. Export is disabled
+while the current contour revision is unavailable or being refreshed. No Python,
+GDAL installation, separate SQLite executable or network access is needed to
+export a GeoPackage from the application.
+
+With **Automatically refresh after DTM changes** enabled (the default), edits,
+Undo and Redo regenerate the contours in the background. Further DTM editing is
+allowed during refresh; newer edits cancel obsolete work. Old outlines may remain
+faded temporarily, but stale geometry cannot be exported as the current revision.
+A short debounce batches rapid edits. Settings changes trigger a full rebuild;
+local DTM changes reuse unaffected contour tiles, with complete smoothing halos.
+
+Choose **Move/pin contour**, set a constraint radius, then drag a contour vertex
+and release. The DTM is adjusted locally to the contour's elevation at the new
+location, and the derived contour regenerates. This changes the terrain; it is
+not an independent vector drawing disconnected from the DTM. The surrounding
+change feathers out within the radius. Protected samples retain the pin through
+rounding and smoothing. A conflicting DTM edit is rejected atomically; remove its
+pin in the tool panel before intentionally changing that terrain. A move, pin
+removal, Undo or Redo remains one edit-history action. Escape cancels a drag.
+
+Pins require **block average factor 1**, valid surrounding elevations and a
+nonzero local slope. The radius is 2–50 source pixels; up to 256 pins can be
+active in a session. Known water levels and existing pins cannot be overwritten
+by another pin. Constraints are session state: save the edited DTM and the
+GeoPackage/report to preserve terrain and an audit record before closing. Opening
+an exported TIFF does not reload pins; a reloadable constraint project is not
+implemented. Contour CSV/GPKG exports do not automatically reload as editable
+application sessions either.
+
+### Responsiveness and scope
+
+The engine caches 128×128 contour-cell tiles, retraces affected tiles, and rejoins
+geometry across tile edges. Up to four workers are used for tracing. A focal mean
+uses running sums rather than a nested neighbourhood loop. The viewer caches
+canvas paths and reuses the unchanged source preview; state polling does not
+rescan the immutable source elevation range on every request.
+
+On the onboarding Linux machine (Xeon Platinum 8573C), three-iteration backend
+benchmarks averaged approximately **288 ms for a full 4.2-million-cell run**,
+**112 ms for a local update on that grid**, and **503 ms for a local update on
+16 million cells**. These use a simple sloping surface, 1-unit contours and a
+3×3 mean. They exclude edit snapshot copying, previews, network transfer,
+GeoPackage export and browser rendering. Dense/noisy contours and other machines
+can be slower; these are measured examples, not latency guarantees.
+
+Input remains limited to **16 million cells / 512 MiB / classic TIFF**. Contour
+output is limited to 2 million traced segments and 4096 elevation levels. This is
+an in-memory engine, not an out-of-core mosaic processor. Local updates still copy
+a surface snapshot, compute whole-grid QA and rejoin the current segment graph;
+very large or dense datasets need cropping, suitable averaging or a larger
+interval. Larger-than-limit processing and viewport-only streaming remain work
+for a future implementation.
+
+### Report compliance
+
+[The complete recommendation audit](docs/report-audit.md) records implemented,
+partial and missing stages, with report page references. **The complete USGS
+hydrographic/cartographic workflow is not implemented.** In particular, automatic
+water/river enforcement, PAEK/vector smoothing, depression classification,
+geographic seam matching and hydrographic proximity QA remain missing. A smooth
+appearance or the availability of GeoPackage export does not establish those
+capabilities or surveyed accuracy.
+
 ## GIS workspace and manual editing
 
 
@@ -150,14 +229,14 @@ at raster centre boundaries and NoData gaps. Elevation rounding, when enabled, p
 hydroflattened cells are restored after each filtering stage. No vector-line
 smoothing is applied.
 
-Limits: at most 4096 elevation levels and 200,000 traced segments per generation.
+Limits: at most 4096 elevation levels and 2 million traced segments per generation.
 Increase interval/averaging/smoothing if limits are reached. Settings use raster
 height units, so a 1 m contour interval requires metre elevation values (use an
 appropriate converted interval for feet). Averaging factors are integer 1–100;
 the smoothing radius is 0–5 (none to 11×11). The app does not invent finer terrain
 resolution by upsampling coarse input.
 
-Save the contour surface as a georeferenced float32 TIFF, or the lines as CSV
+Save the contour surface as a georeferenced float32 TIFF, the lines as GeoPackage, or as CSV
 with elevation, index flag and WKT LINESTRING geometry. CSV coordinates use the
 source raster CRS; in QGIS choose WKT geometry and assign the source raster's CRS.
 Unreferenced demonstration data exports source pixel coordinates, explicitly
@@ -262,7 +341,7 @@ and remaining NoData cells. Filled heights are estimates from neighbouring eleva
 nDSM = max(0, cleaned DSM - DTM).
 Flags are bitwise combined: 1 low repair, 2 high repair, 4 spike repair,
 8 height above estimated ground exceeds ground tolerance, 16 original NoData,
-32 interpolated cell retained in exports, 64 manually edited, 128 hydroflattened.
+32 interpolated cell retained in exports, 64 manually edited, 128 hydroflattened, 256 pinned contour elevation.
 Filled cells combine bits 16 and 32. Other flags may also combine.
 These are raster cell flags, not LAS point classifications.
 
@@ -271,7 +350,7 @@ These are raster cell flags, not LAS point classifications.
 Classic TIFF, single band, integer 8/16/32/64 or float32/64, little/big endian,
 strips or tiles; uncompressed, Deflate or TIFF LZW; predictors 1/2/3.
 RGB and multiband images are rejected. Supports a maximum of 16 million cells
-and 512 MiB input files. Processing is in memory, single job at a time; large
+and 512 MiB input files. Processing is in memory; extraction is single-job, while background contours allow further DTM edits; large
 rasters should be cropped/resampled first. BigTIFF, JPEG, internal validity masks,
 external .msk files, overviews, LAS/LAZ and user ground-anchor masks are not supported.
 Only GDAL_NODATA and nonfinite values are treated as missing samples.
@@ -295,7 +374,7 @@ save results before closing the application.
 
 ## Build and CLI
 
-Requires Go 1.24 or newer, Wails v2 and Windows WebView2 for the desktop build.
+Requires Go 1.26 or newer, Wails v2 and Windows WebView2 for the desktop build.
 
 ```powershell
 go test ./...

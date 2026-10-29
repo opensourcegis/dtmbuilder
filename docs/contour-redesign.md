@@ -8,7 +8,7 @@ GeoTIFF I/O, marching-squares contours, averaging/regional filters and tests.
 The earlier uploaded executable is an older version; its extracted interface
 is not an accurate description of all features in the source archive.
 
-## Implemented first stage
+## Implemented work
 
 - Optional elevation quantization before focal filtering, with a report-inspired
   preset that distinguishes declared elevation units from horizontal units.
@@ -19,9 +19,17 @@ is not an accurate description of all features in the source archive.
 - Regression fixtures for operation order, plateau noise, meaningful relief,
   NoData, water constraints, edit history and report invalidation.
 - Build scripts and GitHub Actions for Windows desktop and Linux browser/CLI.
+- GeoPackage export with source CRS, contour attributes, a spatial index and
+  processing metadata.
+- Background, incremental contour updates after DTM edits, with reusable tiles
+  and filter-support halos.
+- Contour-handle editing that changes and constrains the DTM, with explicit pin
+  removal and Undo/Redo. Pins are session constraints; their audit metadata is
+  exported, but a reloadable project is not implemented.
 
-The remaining pipeline below is a design target, not a claim that every report
-stage has been implemented. Representative user data and survey/control checks
+The pipeline below includes implemented and proposed stages. The current
+[report audit](report-audit.md) records the status of each recommendation;
+the pipeline is not a claim of full implementation. Representative user data and survey/control checks
 are still needed for project-specific contour-quality assessment.
 
 The reference is Tyler and Greenlee (2012), *Creation of Digital Contours That
@@ -80,7 +88,7 @@ in a DSM.
    coordinates to GeoJSON. Show input, DTM, cartographic surface, and contour
    overlays for comparison.
 
-## Required validation when implementation is available
+## Validation targets
 
 - Plane and sloping-surface fixtures: expected contour elevations, spacing,
   placement, and base/index behaviour.

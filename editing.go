@@ -28,14 +28,15 @@ type cellChange struct {
 	Before, After, FlagBefore, FlagAfter float32
 }
 type EditRecord struct {
-	Tool      string       `json:"tool"`
-	Cells     int          `json:"cells"`
-	Elevation *float64     `json:"elevation,omitempty"`
-	Time      string       `json:"time"`
-	Changes   []cellChange `json:"-"`
-	Points    []CellPoint  `json:"points,omitempty"`
-	Radius    int          `json:"radius,omitempty"`
-	Threshold float64      `json:"threshold,omitempty"`
+	ConstraintsBefore, ConstraintsAfter *[]ContourConstraint `json:"-"`
+	Tool                                string               `json:"tool"`
+	Cells                               int                  `json:"cells"`
+	Elevation                           *float64             `json:"elevation,omitempty"`
+	Time                                string               `json:"time"`
+	Changes                             []cellChange         `json:"-"`
+	Points                              []CellPoint          `json:"points,omitempty"`
+	Radius                              int                  `json:"radius,omitempty"`
+	Threshold                           float64              `json:"threshold,omitempty"`
 }
 type editHistory struct {
 	Undo, Redo    []EditRecord
@@ -47,7 +48,8 @@ type editHistory struct {
 
 func (s *studio) resetEdits() {
 	s.edits = editHistory{Revision: s.edits.Revision + 1}
-	s.contours = nil
+	s.invalidateContours(true)
+	s.constraints = nil
 }
 
 func initializeDTM(g *Grid) *Result {
@@ -63,7 +65,7 @@ func initializeDTM(g *Grid) *Result {
 	return r
 }
 func recount(r *Result) {
-	for _, key := range []string{"nonground", "nodata", "filledOutput", "remainingNoData", "manual", "hydro"} {
+	for _, key := range []string{"nonground", "nodata", "filledOutput", "remainingNoData", "manual", "hydro", "constraint"} {
 		r.Counts[key] = 0
 	}
 	for i, f := range r.Flags {
@@ -82,6 +84,9 @@ func recount(r *Result) {
 		}
 		if bits&128 != 0 {
 			r.Counts["hydro"]++
+		}
+		if bits&256 != 0 {
+			r.Counts["constraint"]++
 		}
 		if !valid(r.DTM[i]) {
 			r.Counts["remainingNoData"]++
@@ -274,6 +279,9 @@ func (s *studio) applyEdit(q EditRequest) error {
 		}
 		// A flat cell already at the requested water level still needs a water
 		// constraint, so contour filtering cannot subsequently raise/lower it.
+		if valid(old) && value != old && int(r.Flags[i])&256 != 0 {
+			return errors.New("this edit overlaps a pinned contour elevation; remove that contour pin first")
+		}
 		newWaterConstraint := q.Tool == "flatten" && int(r.Flags[i])&128 == 0
 		if !valid(value) || valid(old) && value == old && !newWaterConstraint {
 			continue
@@ -306,10 +314,14 @@ func (s *studio) applyEdit(q EditRequest) error {
 		level := q.Elevation
 		rec.Elevation = &level
 	}
+	s.recordEdit(rec)
+	return nil
+}
+func (s *studio) recordEdit(rec EditRecord) {
 	s.commitChanges(rec, true)
 	s.edits.Undo = append(s.edits.Undo, rec)
 	s.edits.Redo = nil
-	s.edits.Bytes += len(changes) * 24
+	s.edits.Bytes += rec.Cells * 24
 	for (s.edits.Bytes > 32<<20 || len(s.edits.Undo) > 50) && len(s.edits.Undo) > 1 {
 		s.edits.Bytes -= len(s.edits.Undo[0].Changes) * 24
 		s.edits.Undo = s.edits.Undo[1:]
@@ -317,9 +329,8 @@ func (s *studio) applyEdit(q EditRequest) error {
 	audit := rec
 	audit.Changes = nil
 	s.edits.Audit = append(s.edits.Audit, audit)
-	s.message = fmt.Sprintf("%s: %d cells edited", q.Tool, len(changes))
+	s.message = fmt.Sprintf("%s: %d cells edited", rec.Tool, rec.Cells)
 	s.failure = ""
-	return nil
 }
 func (s *studio) commitChanges(rec EditRecord, forward bool) {
 	// Copy-on-write keeps concurrent preview/export snapshots consistent.
@@ -333,6 +344,7 @@ func (s *studio) commitChanges(rec EditRecord, forward bool) {
 		r.Counts[k] = v
 	}
 	for _, c := range rec.Changes {
+		editCellCounts(&r, c.Index, -1)
 		v, f := c.After, c.FlagAfter
 		if !forward {
 			v, f = c.Before, c.FlagBefore
@@ -344,11 +356,20 @@ func (s *studio) commitChanges(rec EditRecord, forward bool) {
 		} else {
 			r.NDSM[c.Index] = float32(math.NaN())
 		}
+		editCellCounts(&r, c.Index, 1)
+		x, y := c.Index%s.grid.W, c.Index/s.grid.W
+		s.contourDirty = s.contourDirty.union(cellRect{x, y, x, y, true})
 	}
-	recount(&r)
 	s.result = &r
+	if rec.ConstraintsBefore != nil {
+		target := rec.ConstraintsBefore
+		if forward {
+			target = rec.ConstraintsAfter
+		}
+		s.constraints = append([]ContourConstraint{}, (*target)...)
+	}
 	s.edits.Revision++
-	s.contours = nil
+	s.invalidateContours(false)
 }
 func (s *studio) historyEdit(redo bool) error {
 	if s.busy || s.result == nil {
@@ -399,6 +420,10 @@ func (s *studio) inspect(x, y int) (map[string]any, error) {
 	return out, nil
 }
 func worldAt(g *Grid, x, y float64) (float64, float64, bool) {
+	if geoKey(g, 1025) == 2 {
+		x -= .5
+		y -= .5
+	}
 	if g.Order == nil {
 		return 0, 0, false
 	}
@@ -421,4 +446,18 @@ func worldAt(g *Grid, x, y float64) (float64, float64, bool) {
 		return tie[3] + (x-tie[0])*scale[0], tie[4] - (y-tie[1])*scale[1], true
 	}
 	return 0, 0, false
+}
+
+func editCellCounts(r *Result, i, delta int) {
+	for _, entry := range []struct {
+		bit int
+		key string
+	}{{8, "nonground"}, {16, "nodata"}, {32, "filledOutput"}, {64, "manual"}, {128, "hydro"}, {256, "constraint"}} {
+		if int(r.Flags[i])&entry.bit != 0 {
+			r.Counts[entry.key] += delta
+		}
+	}
+	if !valid(r.DTM[i]) {
+		r.Counts["remainingNoData"] += delta
+	}
 }

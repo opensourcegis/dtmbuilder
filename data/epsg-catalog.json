@@ -1,0 +1,8 @@
+{
+  "source": "PROJ proj.db distributed with Rasterio",
+  "proj_version": "9.8.1",
+  "epsg_version": "v12.029",
+  "epsg_date": "2025-10-02",
+  "crs_count": 6396,
+  "license": "PROJ-COPYING; EPSG coordinate reference system definitions attributed to IOGP/EPSG"
+}

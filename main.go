@@ -44,22 +44,36 @@ var contoursJS string
 //go:embed brush.js
 var brushJS string
 
+//go:embed contour_edit.js
+var contourEditJS string
+
+const studioHealthID = "terrain-studio-go-live-contours-v2"
+
 type studio struct {
 	sync.Mutex
-	grid         *Grid
-	result       *Result
-	name         string
-	busy         bool
-	progress     int
-	message      string
-	failure      string
-	cancel       context.CancelFunc
-	params       Params
-	token, host  string
-	desktop      bool
-	edits        editHistory
-	resultMethod string
-	contours     *ContourSet
+	grid                 *Grid
+	result               *Result
+	name                 string
+	busy                 bool
+	progress             int
+	message              string
+	failure              string
+	cancel               context.CancelFunc
+	params               Params
+	token, host          string
+	desktop              bool
+	edits                editHistory
+	resultMethod         string
+	contours             *ContourSet
+	contourBusy          bool
+	contourCancel        context.CancelFunc
+	contourJob           uint64
+	contourCache         *contourCache
+	contourDirty         cellRect
+	constraints          []ContourConstraint
+	nextConstraintID     int
+	extentGrid           *Grid
+	extentMin, extentMax float64
 }
 
 func main() {
@@ -176,7 +190,7 @@ func existingStudio(host string) bool {
 	}
 	defer r.Body.Close()
 	b, err := io.ReadAll(io.LimitReader(r.Body, 100))
-	return err == nil && r.StatusCode == http.StatusOK && string(b) == "terrain-studio-go"
+	return err == nil && r.StatusCode == http.StatusOK && string(b) == studioHealthID
 }
 
 func openBrowser(url string) error {
@@ -214,7 +228,7 @@ func (s *studio) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == "GET" {
-		assets := map[string]struct{ body, kind string }{"/app.js": {appJS, "text/javascript"}, "/editor.js": {editorJS, "text/javascript"}, "/style.css": {styleCSS, "text/css"}, "/contours.js": {contoursJS, "text/javascript"}, "/brush.js": {brushJS, "text/javascript"}}
+		assets := map[string]struct{ body, kind string }{"/app.js": {appJS, "text/javascript"}, "/editor.js": {editorJS, "text/javascript"}, "/style.css": {styleCSS, "text/css"}, "/contours.js": {contoursJS, "text/javascript"}, "/brush.js": {brushJS, "text/javascript"}, "/contour_edit.js": {contourEditJS, "text/javascript"}}
 		if a, ok := assets[r.URL.Path]; ok {
 			w.Header().Set("Content-Type", a.kind+"; charset=utf-8")
 			fmt.Fprint(w, a.body)
@@ -223,7 +237,7 @@ func (s *studio) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/api/health" && r.Method == "GET" {
 		w.Header().Set("Content-Type", "text/plain")
-		fmt.Fprint(w, "terrain-studio-go")
+		fmt.Fprint(w, studioHealthID)
 		return
 	}
 	if r.Header.Get("X-Studio-Token") != s.token {
@@ -352,35 +366,11 @@ func (s *studio) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, e.Error(), 400)
 			return
 		}
-		s.Lock()
-		if s.busy || s.result == nil {
-			s.Unlock()
-			http.Error(w, "create/open a DTM and wait for the active job", 409)
+		if e := s.startContourJob(p); e != nil {
+			http.Error(w, e.Error(), 409)
 			return
 		}
-		ctx, cancel := context.WithCancel(context.Background())
-		s.cancel = cancel
-		s.busy = true
-		s.failure = ""
-		s.progress = 0
-		s.message = "Generating DTM contours"
-		g, z, revision, flags := s.grid, s.result.DTM, s.edits.Revision, s.result.Flags
-		s.Unlock()
-		go func() {
-			defer cancel()
-			c, e := generateContours(ctx, g, z, p, revision, func(n int, m string) { s.Lock(); s.progress = n; s.message = m; s.Unlock() }, flags)
-			s.Lock()
-			defer s.Unlock()
-			s.busy = false
-			if e != nil {
-				s.failure = e.Error()
-				s.message = "Contour generation stopped"
-				return
-			}
-			s.contours = c
-			s.progress = 100
-			s.message = fmt.Sprintf("Contours ready: %d lines", len(c.Lines))
-		}()
+
 		reply(w, map[string]bool{"started": true})
 	case r.URL.Path == "/api/contours" && r.Method == "GET":
 		s.Lock()
@@ -407,6 +397,22 @@ func (s *studio) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/csv")
 		w.Header().Set("Content-Disposition", `attachment; filename="contours.csv"`)
 		_, _ = w.Write(b)
+	case r.URL.Path == "/api/contours/gpkg" && r.Method == "GET":
+		s.Lock()
+		g, c := s.grid, s.contours
+		s.Unlock()
+		if c == nil {
+			http.Error(w, "wait for current contours to finish refreshing", 409)
+			return
+		}
+		b, e := contourGPKG(r.Context(), g, c)
+		if e != nil {
+			http.Error(w, e.Error(), 500)
+			return
+		}
+		w.Header().Set("Content-Type", "application/geopackage+sqlite3")
+		w.Header().Set("Content-Disposition", `attachment; filename="contours.gpkg"`)
+		_, _ = w.Write(b)
 	case r.URL.Path == "/api/contours/report" && r.Method == "GET":
 		s.Lock()
 		defer s.Unlock()
@@ -432,6 +438,39 @@ func (s *studio) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/tiff")
 		w.Header().Set("Content-Disposition", `attachment; filename="contour-surface.tif"`)
 		_, _ = w.Write(b)
+	case r.URL.Path == "/api/contours/pin" && r.Method == "POST":
+		var q ContourPinRequest
+		r.Body = http.MaxBytesReader(w, r.Body, 4096)
+		d := json.NewDecoder(r.Body)
+		d.DisallowUnknownFields()
+		if e := d.Decode(&q); e != nil {
+			http.Error(w, e.Error(), 400)
+			return
+		}
+		s.Lock()
+		defer s.Unlock()
+		if e := s.pinContour(q); e != nil {
+			http.Error(w, e.Error(), 409)
+			return
+		}
+		reply(w, s.state())
+	case r.URL.Path == "/api/contours/unpin" && r.Method == "POST":
+		var q struct {
+			ID       int `json:"id"`
+			Revision int `json:"revision"`
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1024)
+		if e := json.NewDecoder(r.Body).Decode(&q); e != nil {
+			http.Error(w, e.Error(), 400)
+			return
+		}
+		s.Lock()
+		defer s.Unlock()
+		if e := s.removeContourPin(q.ID, q.Revision); e != nil {
+			http.Error(w, e.Error(), 409)
+			return
+		}
+		reply(w, s.state())
 	case r.URL.Path == "/api/edit" && r.Method == "POST":
 		var q EditRequest
 		r.Body = http.MaxBytesReader(w, r.Body, 32768)
@@ -486,6 +525,9 @@ func (s *studio) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reply(w, v)
 	case r.URL.Path == "/api/cancel" && r.Method == "POST":
 		s.Lock()
+		if s.contourCancel != nil {
+			s.invalidateContours(false)
+		}
 		if s.cancel != nil {
 			s.cancel()
 		}
@@ -536,7 +578,7 @@ func (s *studio) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Disposition", `attachment; filename="terrain-report.json"`)
-		reply(w, map[string]any{"input": s.name, "width": s.grid.W, "height": s.grid.H, "parameters": s.params, "counts": s.result.Counts, "edits": s.edits.Audit, "method": s.resultMethod, "flags": "1 low, 2 high, 4 spike, 8 non-ground, 16 original NoData, 32 filled output, 64 manual edit, 128 hydroflatten; bitwise combined", "fill_original_nodata_in_outputs": s.params.FillOutput, "contours": contourReport(s.grid, s.contours)})
+		reply(w, map[string]any{"input": s.name, "width": s.grid.W, "height": s.grid.H, "parameters": s.params, "counts": s.result.Counts, "edits": s.edits.Audit, "method": s.resultMethod, "flags": "1 low, 2 high, 4 spike, 8 non-ground, 16 original NoData, 32 filled output, 64 manual edit, 128 hydroflatten, 256 contour pin; bitwise combined", "fill_original_nodata_in_outputs": s.params.FillOutput, "contours": contourReport(s.grid, s.contours), "constraints": s.constraints})
 	default:
 		http.NotFound(w, r)
 	}
@@ -571,16 +613,20 @@ func (s *studio) layer(k string) (*Grid, []float32) {
 	return nil, nil
 }
 func (s *studio) state() map[string]any {
-	m := map[string]any{"busy": s.busy, "progress": s.progress, "message": s.message, "error": s.failure, "ready": s.grid != nil, "complete": s.result != nil, "defaults": defaults()}
-	m["editing"] = map[string]any{"revision": s.edits.Revision, "undo": len(s.edits.Undo), "redo": len(s.edits.Redo), "audit": s.edits.Audit}
+	m := map[string]any{"busy": s.busy, "progress": s.progress, "message": s.message, "error": s.failure, "ready": s.grid != nil, "complete": s.result != nil, "defaults": defaults(), "contourBusy": s.contourBusy, "constraints": s.constraints}
+	m["editing"] = map[string]any{"revision": s.edits.Revision, "undo": len(s.edits.Undo), "redo": len(s.edits.Redo), "audit": s.edits.Audit[max(0, len(s.edits.Audit)-8):]}
 	m["unsavedEdits"] = s.result != nil && s.result.Counts["manual"] > 0 && s.edits.Revision != s.edits.SavedRevision
 	if s.contours != nil {
-		m["contours"] = map[string]any{"revision": s.contours.Revision, "parameters": s.contours.Params, "lines": len(s.contours.Lines), "segments": s.contours.Segments, "removedSmallLoops": s.contours.RemovedSmallLoops, "removedShortLines": s.contours.RemovedShortLines, "quality": s.contours.Quality}
+		m["contours"] = map[string]any{"revision": s.contours.Revision, "parameters": s.contours.Params, "lines": len(s.contours.Lines), "segments": s.contours.Segments, "removedSmallLoops": s.contours.RemovedSmallLoops, "removedShortLines": s.contours.RemovedShortLines, "quality": s.contours.Quality, "generation": s.contours.Generation, "performance": s.contours.Performance}
 	} else {
 		m["contours"] = nil
 	}
 	if s.grid != nil {
-		lo, hi := extent(s.grid.Z)
+		if s.extentGrid != s.grid {
+			s.extentMin, s.extentMax = extent(s.grid.Z)
+			s.extentGrid = s.grid
+		}
+		lo, hi := s.extentMin, s.extentMax
 		m["raster"] = map[string]any{"name": s.name, "width": s.grid.W, "height": s.grid.H, "min": lo, "max": hi, "pixelSize": s.grid.PixelSize, "georeferenced": len(s.grid.Tags[34735].Data) > 0}
 		m["raster"].(map[string]any)["horizontalUnit"] = horizontalUnit(s.grid)
 	}
@@ -615,6 +661,8 @@ func preview(g *Grid, z []float32, layer string) image.Image {
 			if valid(v) {
 				if layer == "flags" {
 					switch {
+					case int(v)&256 != 0:
+						c = color.NRGBA{180, 65, 160, 255}
 					case int(v)&128 != 0:
 						c = color.NRGBA{70, 153, 230, 255}
 					case int(v)&64 != 0:

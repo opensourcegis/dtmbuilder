@@ -107,6 +107,6 @@ func contourReport(g *Grid, c *ContourSet) any {
 		"sourceWidth": g.W, "sourceHeight": g.H, "surfaceWidth": c.Surface.W, "surfaceHeight": c.Surface.H,
 		"horizontalUnit": horizontalUnit(g), "projectedEPSG": geoKey(g, 3072),
 		"lines": len(c.Lines), "segments": c.Segments, "removedSmallLoops": c.RemovedSmallLoops, "removedShortLines": c.RemovedShortLines,
-		"quality": c.Quality,
+		"quality": c.Quality, "performance": c.Performance, "generation": c.Generation, "constraints": c.Constraints,
 	}
 }
