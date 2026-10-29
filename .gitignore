@@ -1,0 +1,20 @@
+terrain-go.exe
+outputs/
+.cache/
+.modules/
+Terrain Studio.exe
+terrain-go-fixed.exe
+server*.log
+desktop*.log
+Terrain Studio.exe.WebView2/
+Terrain Studio Updated.exe
+terrain-check.exe
+.gui-check.pid
+Terrain Studio Hillshade.exe
+Terrain Studio Navigation.exe
+Terrain Studio GIS.exe
+Terrain Studio Contours.exe
+Terrain Studio Regional.exe
+Terrain Studio Area Filter.exe
+.tmp/
+*.exe.WebView2/

@@ -1,0 +1,5 @@
+Terrain Studio Go is an independent implementation inspired by the DSM-to-DTM
+workflow in CNES Bulldozer (https://github.com/CNES/bulldozer), Apache-2.0,
+Copyright 2022-2026 CNES. No CNES source code is included in this implementation.
+This implementation does not reproduce or claim numerical equivalence to
+Bulldozer's multiresolution cloth simulation.
