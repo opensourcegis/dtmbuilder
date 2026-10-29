@@ -19,6 +19,55 @@ artifacts for each successful workflow run. Local outputs go in `dist/`.
    to repeat a configuration. All jobs start from the original input.
 
 
+## High-resolution DTM: protected features and edge filtering
+
+[Research notes and paper links](docs/contour-research.md) explain the methods,
+access limits and validation. The new filter adapts Perona–Malik diffusion to
+DTM elevations; it does not reproduce the Sun/Lindsay normal-field method or PAEK.
+
+1. Open the DTM, declare source height units and choose the contour interval.
+   In **Contours**, select **High-resolution DTM · constrained edge filter**.
+   It keeps source resolution, disables size filters and starts with four edge
+   diffusion passes, a contrast of half the interval and a surface-change cap of
+   one fifth of the interval. These are adjustable starting values, not accuracy
+   criteria. Compare banks, ridges, small hills and drainage against the DTM.
+2. Choose **Breakline** and click two or more vertices, then **Apply selection**.
+   **Preserve current DTM heights** locks the existing terrain in a 1–5 pixel
+   radius corridor. **Grade** uses entered endpoint heights; **Downstream grade**
+   requires drawing from upstream to downstream with a non-increasing endpoint
+   profile. Grading modifies the DTM. A raster corridor is not a zero-width TIN
+   constraint or a complete drainage model.
+3. Choose **Lock waterbody**, enter its known level and draw the outside boundary.
+   If there is an island, click **Save this ring & draw an island**, then draw
+   its exclusion boundary. Repeat for additional islands before applying.
+   NoData remains missing unless filling is enabled. The level is locked through
+   filtering and contour geometry is clipped from the water interior. Islands
+   and boundary-coincident contours remain; known water heights are never shifted
+   merely to avoid a contour interval.
+4. Protected features require **average factor 1** and box/regional means off.
+   The UI selects compatible settings when features are added/restored. Further
+   edits that would change locked cells are rejected atomically. Remove the
+   feature in its tool panel to release it; removal retains edited heights.
+   Add/remove operations support Undo/Redo and automatic contour refresh.
+5. Save the DTM and export **GeoPackage**. It includes `terrain_breaklines` and
+   `terrain_waterbodies` vector layers, island geometry, height attributes and the
+   processing/QA report in addition to contours. Features remain session state;
+   reopening a TIFF/GPKG does not restore app constraints.
+
+The change cap limits vertical generalization from the **edited** DTM when
+averaging is 1. It does not establish survey accuracy, bound horizontal contour
+movement or preserve every small feature automatically. The height-contrast
+parameter is an adjacent-cell height difference, not a physical slope or map-scale
+tolerance. A warning identifies adjacent terrain below a locked water level;
+clipping alone cannot fix inconsistent shorelines/banks. The legacy
+**Hydroflatten** tool remains available for a simple, replaceable raster edit.
+
+Up to 128 protected features and one million active protected cell references are
+supported, with 250,000 cells per edit, 256 vertices per line/ring and up to 16
+island rings per waterbody. The 16-million-cell input limit remains. State polling
+returns feature summaries; full vector geometry is fetched only when features
+change. Incremental contour updates include the edge filter's full support.
+
 ## GeoPackage, live contours and constraints
 
 **Save contours (.gpkg)** exports the current complete contour revision as an
@@ -27,8 +76,8 @@ OGC GeoPackage 1.4 file, directly from the Go application. It contains:
 - `contours`: source-CRS LineStrings with elevation, index status, contour
   interval, declared elevation units, revision, area where known, and a NULL
   depression field until depression classification is implemented.
-- A spatial R-tree index with standard maintenance triggers for subsequent GIS
-  edits. CRS definitions are included from the bundled PROJ/EPSG catalog.
+- A spatial R-tree index on the contour layer with standard maintenance triggers
+  for subsequent GIS edits. CRS definitions are included from the bundled PROJ/EPSG catalog.
 - `terrain_report`: parameters, surface-change QA, refresh timings and contour
   elevation constraints. Unknown CRS remains explicitly undefined; projected
   coordinates are never labelled as EPSG:4326 just because the base datum is WGS84.
@@ -348,7 +397,8 @@ and remaining NoData cells. Filled heights are estimates from neighbouring eleva
 nDSM = max(0, cleaned DSM - DTM).
 Flags are bitwise combined: 1 low repair, 2 high repair, 4 spike repair,
 8 height above estimated ground exceeds ground tolerance, 16 original NoData,
-32 interpolated cell retained in exports, 64 manually edited, 128 hydroflattened, 256 pinned contour elevation.
+32 interpolated cell retained in exports, 64 manually edited, 128 hydroflattened, 256 pinned contour elevation, 512 protected breakline,
+1024 locked waterbody.
 Filled cells combine bits 16 and 32. Other flags may also combine.
 These are raster cell flags, not LAS point classifications.
 

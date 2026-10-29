@@ -12,7 +12,7 @@ try {
     Copy-Item "Start-Terrain-Studio.cmd", "README.md", "NOTICE" $OutputDirectory -Force
     $documentation = Join-Path $OutputDirectory "docs"
     New-Item -ItemType Directory -Force -Path $documentation | Out-Null
-    Copy-Item "docs/report-audit.md", "docs/validation.md", "docs/contour-redesign.md" $documentation -Force
+    Copy-Item "docs/report-audit.md", "docs/validation.md", "docs/contour-redesign.md", "docs/contour-research.md" $documentation -Force
     $checksum = (Get-FileHash -Algorithm SHA256 $executable).Hash.ToLowerInvariant()
     "$checksum  Terrain-Studio.exe" | Set-Content (Join-Path $OutputDirectory "SHA256SUMS.txt") -Encoding ascii
     Write-Host "Built $executable. Windows WebView2 is required to run the desktop interface."

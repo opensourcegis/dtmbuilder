@@ -9,16 +9,19 @@ import (
 // These are differences from the edited DTM, NOT accuracy against survey control.
 // Each valid source cell is compared with its corresponding contour-grid block.
 type ContourQuality struct {
-	ComparedCells        int      `json:"comparedCells"`
-	ChangedCells         int      `json:"changedCells"`
-	MaskedSourceCells    int      `json:"maskedSourceCells"`
-	CroppedSourceCells   int      `json:"croppedSourceCells"`
-	MeanChange           float64  `json:"meanChange"`
-	RMSEChange           float64  `json:"rmseChange"`
-	MaxAbsChange         float64  `json:"maxAbsChange"`
-	HydroSourceCells     int      `json:"hydroSourceCells"`
-	PreservedHydroBlocks int      `json:"preservedHydroBlocks"`
-	Warnings             []string `json:"warnings"`
+	ComparedCells            int      `json:"comparedCells"`
+	ChangedCells             int      `json:"changedCells"`
+	MaskedSourceCells        int      `json:"maskedSourceCells"`
+	CroppedSourceCells       int      `json:"croppedSourceCells"`
+	MeanChange               float64  `json:"meanChange"`
+	RMSEChange               float64  `json:"rmseChange"`
+	MaxAbsChange             float64  `json:"maxAbsChange"`
+	HydroSourceCells         int      `json:"hydroSourceCells"`
+	PreservedHydroBlocks     int      `json:"preservedHydroBlocks"`
+	ProtectedFeatureCells    int      `json:"protectedFeatureCells"`
+	FeatureSampleMismatches  int      `json:"featureSampleMismatches"`
+	ShorelineBelowLevelCells int      `json:"shorelineBelowLevelCells"`
+	Warnings                 []string `json:"warnings"`
 }
 
 func contourQuality(ctx context.Context, g *Grid, z []float32, surface *Grid, p ContourParams, masks ...[]float32) (ContourQuality, error) {
@@ -37,6 +40,12 @@ func contourQuality(ctx context.Context, g *Grid, z []float32, surface *Grid, p 
 		for x := 0; x < g.W; x++ {
 			i := y*g.W + x
 			water := len(flags) > 0 && valid(z[i]) && int(flags[i])&128 != 0
+			if len(flags) > 0 && int(flags[i])&(512|1024) != 0 && valid(z[i]) {
+				q.ProtectedFeatureCells++
+				if p.AverageFactor == 1 && surface.Z[i] != z[i] {
+					q.FeatureSampleMismatches++
+				}
+			}
 			if water {
 				q.HydroSourceCells++
 			}
@@ -48,7 +57,7 @@ func contourQuality(ctx context.Context, g *Grid, z []float32, surface *Grid, p 
 				q.MaskedSourceCells++
 				continue
 			}
-			if water && p.PreserveHydro {
+			if water && (p.PreserveHydro || int(flags[i])&1024 != 0) {
 				waterBlocks[j] = true
 				level := (float64(z[i]) - p.Base) / p.Interval
 				if math.Abs(level-math.Round(level)) < 1e-6 {
@@ -79,19 +88,30 @@ func contourQuality(ctx context.Context, g *Grid, z []float32, surface *Grid, p 
 		q.Warnings = append(q.Warnings, "Rounding is at least half the contour interval and may suppress real relief; reduce the rounding step.")
 	}
 	if p.ElevationQuantum > 0 && p.SmoothRadius == 0 {
-		q.Warnings = append(q.Warnings, "Elevation rounding has no following focal mean. The report's anti-wormwood treatment rounds and then filters.")
+		if p.EdgePasses == 0 {
+			q.Warnings = append(q.Warnings, "Elevation rounding has no following focal mean or edge filter. The report's anti-wormwood treatment rounds and then filters.")
+		}
 	}
 	if q.PreservedHydroBlocks == 0 {
-		q.Warnings = append(q.Warnings, "No manually hydroflattened water cells are protected. This output does not establish conformity to lakes or rivers.")
+		q.Warnings = append(q.Warnings, "No water cells/blocks are protected. This output does not establish conformity to lakes or rivers.")
 	}
 	if waterOnLevel {
-		q.Warnings = append(q.Warnings, "A protected water elevation coincides with a contour level. The known water level is retained; shoreline routing requires additional hydrography treatment.")
+		q.Warnings = append(q.Warnings, "A protected water elevation coincides with a contour level. The known level is retained; locked waterbody polygons exclude interiors, while shoreline routing requires additional hydrography treatment.")
 	}
 	if q.CroppedSourceCells > 0 {
 		q.Warnings = append(q.Warnings, "Incomplete right/bottom averaging blocks were cropped; see croppedSourceCells.")
 	}
 	if p.MinArea > 0 || p.MinLength > 0 {
 		q.Warnings = append(q.Warnings, "Size filtering can hide real hills and depressions. Compare with minimum area and minimum length set to zero.")
+	}
+	if p.EdgePasses > 0 {
+		q.Warnings = append(q.Warnings, "Edge filtering is a Perona–Malik elevation adaptation, not the Sun/Lindsay normal-vector method or PAEK. The contrast is a source-height difference between adjacent cells, not a map-scale tolerance.")
+	}
+	if q.ProtectedFeatureCells > 0 {
+		q.Warnings = append(q.Warnings, "Protected features use raster corridors/level samples. Stream endpoint grading does not establish a connected drainage network or verified flow accumulation.")
+	}
+	if p.MaxSurfaceChange > 0 && p.AverageFactor > 1 {
+		q.Warnings = append(q.Warnings, "The change cap is relative to the averaged contour-grid height, not every original source cell. Use average factor 1 for a source-cell cap.")
 	}
 	return q, nil
 }
@@ -102,11 +122,13 @@ func contourReport(g *Grid, c *ContourSet) any {
 	}
 	return map[string]any{
 		"reference":  "Tyler and Greenlee (2012), USGS SIR 2012–5167, pp. 18–21",
-		"method":     "Separate contour surface: block average, optional elevation rounding, focal mean, optional regional means; marching squares. No TopoToRaster or PAEK implementation.",
+		"method":     "Separate contour surface: block average, optional elevation rounding, focal mean, optional Perona–Malik elevation diffusion, optional regional means and a change cap; marching squares; exact protected-water polygon clipping. No TopoToRaster, Sun normal-vector filter or PAEK implementation.",
 		"parameters": c.Params, "revision": c.Revision,
 		"sourceWidth": g.W, "sourceHeight": g.H, "surfaceWidth": c.Surface.W, "surfaceHeight": c.Surface.H,
 		"horizontalUnit": horizontalUnit(g), "projectedEPSG": geoKey(g, 3072),
 		"lines": len(c.Lines), "segments": c.Segments, "removedSmallLoops": c.RemovedSmallLoops, "removedShortLines": c.RemovedShortLines,
 		"quality": c.Quality, "performance": c.Performance, "generation": c.Generation, "constraints": c.Constraints,
+		"terrainFeatures": c.TerrainFeatures, "featureCoordinateSystem": "source raster pixel coordinates (cell centres at half integers)", "waterClippedSegments": c.WaterClippedSegments,
+		"research": "See docs/contour-research.md: Tyler/Greenlee 2012; Lindsay/Francioni/Cockburn 2019; Sun et al. 2007; Perona/Malik 1990. The edge filter adapts Perona–Malik; the other works inform constraints and validation, not claims of algorithmic equivalence.",
 	}
 }

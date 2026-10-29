@@ -18,13 +18,14 @@ try {
   page.on('pageerror', e => errors.push(e.message));
   page.on('dialog', d => d.accept());
   await page.goto(process.env.STUDIO_URL || 'http://127.0.0.1:8789');
+  await page.locator('#demo').click();
+  await page.waitForFunction(() => state.ready && !uploading);
   await page.locator('#contourTab').click();
   await page.locator('#autoContours').uncheck();
   await page.locator('#contourHeightUnit').selectOption('m');
   await page.locator('#contourPreset').selectOption('cartographic');
   assert.equal(await page.locator('#contourQuantum').inputValue(), '0.03048');
   assert.equal(await page.locator('#contourMinArea').inputValue(), '0');
-  await page.locator('#demo').click();
   await page.locator('#editBase').click();
   await page.waitForFunction(() => state.complete && !state.busy);
   await page.locator('#contourTab').click();

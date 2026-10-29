@@ -19,6 +19,10 @@ is not an accurate description of all features in the source archive.
 - Regression fixtures for operation order, plateau noise, meaningful relief,
   NoData, water constraints, edit history and report invalidation.
 - Build scripts and GitHub Actions for Windows desktop and Linux browser/CLI.
+- Bounded Perona–Malik elevation diffusion, protected drawn breakline corridors,
+  level waterbody polygons with island exclusions and exact water-interior contour
+  clipping. The [research review](contour-research.md) distinguishes the implemented
+  adaptation from the cited normal-field methods and the remaining vector stages.
 - GeoPackage export with source CRS, contour attributes, a spatial index and
   processing metadata.
 - Background, incremental contour updates after DTM edits, with reusable tiles

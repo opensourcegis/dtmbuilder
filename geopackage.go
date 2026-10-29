@@ -233,6 +233,9 @@ func contourGPKG(ctx context.Context, g *Grid, c *ContourSet) ([]byte, error) {
 			return nil, e
 		}
 	}
+	if e = exportConstraintLayers(ctx, tx, g, c, srs); e != nil {
+		return nil, e
+	}
 	if e = tx.Commit(); e != nil {
 		return nil, e
 	}

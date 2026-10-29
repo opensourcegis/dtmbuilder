@@ -139,3 +139,55 @@ func TestCustomProjectedCRSDoesNotBecomeGeographic(t *testing.T) {
 		t.Fatal("a declared geographic CRS was not resolved")
 	}
 }
+
+func TestConstraintGeoPackageLayers(t *testing.T) {
+	g := areaFixture()
+	s := &studio{grid: g, result: initializeDTM(g), params: defaults()}
+	if e := s.applyTerrainFeature(TerrainFeatureRequest{Kind: "breakline", Mode: "preserve", Points: []CellPoint{{5, 5}, {20, 5}}, Radius: 1}); e != nil {
+		t.Fatal(e)
+	}
+	if e := s.applyTerrainFeature(TerrainFeatureRequest{Kind: "waterbody", Points: rectangle(28, 28, 50, 50), Holes: [][]CellPoint{rectangle(36, 36, 42, 42)}, Elevation: 5, Revision: 1}); e != nil {
+		t.Fatal(e)
+	}
+	p := ContourParams{Interval: 1, AverageFactor: 1, IndexEvery: 5, EdgePasses: 3, EdgeThreshold: .3, MaxSurfaceChange: .2}
+	if e := s.startContourJob(p); e != nil {
+		t.Fatal(e)
+	}
+	c := waitForContours(t, s, 2)
+	if len(c.TerrainFeatures) != 2 || c.Quality.FeatureSampleMismatches != 0 {
+		t.Fatal("constraint snapshots/quality missing from published contours")
+	}
+	b, e := contourGPKG(context.Background(), g, c)
+	if e != nil {
+		t.Fatal(e)
+	}
+	path := filepath.Join(t.TempDir(), "constraints.gpkg")
+	if e = os.WriteFile(path, b, 0600); e != nil {
+		t.Fatal(e)
+	}
+	db, e := openGeoPackageDB(path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer db.Close()
+	for _, entry := range []struct {
+		table, kind string
+		wkb         uint32
+	}{{"terrain_breaklines", "LINESTRING", 2}, {"terrain_waterbodies", "POLYGON", 3}} {
+		var count int
+		var geometry []byte
+		var kind string
+		if e = db.QueryRow("SELECT count(*) FROM " + entry.table).Scan(&count); e != nil || count != 1 {
+			t.Fatalf("missing %s: %v", entry.table, e)
+		}
+		if e = db.QueryRow("SELECT geom FROM " + entry.table).Scan(&geometry); e != nil {
+			t.Fatal(e)
+		}
+		if e = db.QueryRow("SELECT geometry_type_name FROM gpkg_geometry_columns WHERE table_name=?", entry.table).Scan(&kind); e != nil || kind != entry.kind || binary.LittleEndian.Uint32(geometry[41:]) != entry.wkb {
+			t.Fatal("incorrect exported constraint geometry")
+		}
+		if entry.wkb == 3 && binary.LittleEndian.Uint32(geometry[45:]) != 2 {
+			t.Fatal("island ring missing from exported water polygon")
+		}
+	}
+}

@@ -28,6 +28,7 @@ type cellChange struct {
 	Before, After, FlagBefore, FlagAfter float32
 }
 type EditRecord struct {
+	FeaturesBefore, FeaturesAfter       *[]TerrainFeature    `json:"-"`
 	ConstraintsBefore, ConstraintsAfter *[]ContourConstraint `json:"-"`
 	Tool                                string               `json:"tool"`
 	Cells                               int                  `json:"cells"`
@@ -50,6 +51,8 @@ func (s *studio) resetEdits() {
 	s.edits = editHistory{Revision: s.edits.Revision + 1}
 	s.invalidateContours(true)
 	s.constraints = nil
+	s.terrainFeatures = nil
+	s.featureGeneration++
 }
 
 func initializeDTM(g *Grid) *Result {
@@ -65,7 +68,7 @@ func initializeDTM(g *Grid) *Result {
 	return r
 }
 func recount(r *Result) {
-	for _, key := range []string{"nonground", "nodata", "filledOutput", "remainingNoData", "manual", "hydro", "constraint"} {
+	for _, key := range []string{"nonground", "nodata", "filledOutput", "remainingNoData", "manual", "hydro", "constraint", "breakline", "waterbody"} {
 		r.Counts[key] = 0
 	}
 	for i, f := range r.Flags {
@@ -87,6 +90,12 @@ func recount(r *Result) {
 		}
 		if bits&256 != 0 {
 			r.Counts["constraint"]++
+		}
+		if bits&512 != 0 {
+			r.Counts["breakline"]++
+		}
+		if bits&1024 != 0 {
+			r.Counts["waterbody"]++
 		}
 		if !valid(r.DTM[i]) {
 			r.Counts["remainingNoData"]++
@@ -282,6 +291,9 @@ func (s *studio) applyEdit(q EditRequest) error {
 		if valid(old) && value != old && int(r.Flags[i])&256 != 0 {
 			return errors.New("this edit overlaps a pinned contour elevation; remove that contour pin first")
 		}
+		if value != old && int(r.Flags[i])&(512|1024) != 0 {
+			return errors.New("this edit overlaps a protected breakline or waterbody; remove its constraint first")
+		}
 		newWaterConstraint := q.Tool == "flatten" && int(r.Flags[i])&128 == 0
 		if !valid(value) || valid(old) && value == old && !newWaterConstraint {
 			continue
@@ -319,18 +331,43 @@ func (s *studio) applyEdit(q EditRequest) error {
 }
 func (s *studio) recordEdit(rec EditRecord) {
 	s.commitChanges(rec, true)
+	for _, discarded := range s.edits.Redo {
+		s.edits.Bytes -= editRecordBytes(discarded)
+	}
 	s.edits.Undo = append(s.edits.Undo, rec)
 	s.edits.Redo = nil
-	s.edits.Bytes += rec.Cells * 24
+	s.edits.Bytes += editRecordBytes(rec)
 	for (s.edits.Bytes > 32<<20 || len(s.edits.Undo) > 50) && len(s.edits.Undo) > 1 {
-		s.edits.Bytes -= len(s.edits.Undo[0].Changes) * 24
+		s.edits.Bytes -= editRecordBytes(s.edits.Undo[0])
 		s.edits.Undo = s.edits.Undo[1:]
 	}
 	audit := rec
 	audit.Changes = nil
+	audit.FeaturesBefore, audit.FeaturesAfter = nil, nil
+	audit.ConstraintsBefore, audit.ConstraintsAfter = nil, nil
 	s.edits.Audit = append(s.edits.Audit, audit)
 	s.message = fmt.Sprintf("%s: %d cells edited", rec.Tool, rec.Cells)
 	s.failure = ""
+}
+
+func editRecordBytes(rec EditRecord) int {
+	bytes := len(rec.Changes) * 24
+	for _, snapshot := range []*[]TerrainFeature{rec.FeaturesBefore, rec.FeaturesAfter} {
+		if snapshot != nil {
+			for _, f := range *snapshot {
+				bytes += len(f.Cells)*8 + len(f.Points)*16
+				for _, ring := range f.Holes {
+					bytes += len(ring) * 16
+				}
+			}
+		}
+	}
+	for _, snapshot := range []*[]ContourConstraint{rec.ConstraintsBefore, rec.ConstraintsAfter} {
+		if snapshot != nil {
+			bytes += len(*snapshot) * 128
+		}
+	}
+	return bytes
 }
 func (s *studio) commitChanges(rec EditRecord, forward bool) {
 	// Copy-on-write keeps concurrent preview/export snapshots consistent.
@@ -367,6 +404,14 @@ func (s *studio) commitChanges(rec EditRecord, forward bool) {
 			target = rec.ConstraintsAfter
 		}
 		s.constraints = append([]ContourConstraint{}, (*target)...)
+	}
+	if rec.FeaturesBefore != nil {
+		target := rec.FeaturesBefore
+		if forward {
+			target = rec.FeaturesAfter
+		}
+		s.terrainFeatures = append([]TerrainFeature{}, (*target)...)
+		s.featureGeneration++
 	}
 	s.edits.Revision++
 	s.invalidateContours(false)
@@ -452,7 +497,7 @@ func editCellCounts(r *Result, i, delta int) {
 	for _, entry := range []struct {
 		bit int
 		key string
-	}{{8, "nonground"}, {16, "nodata"}, {32, "filledOutput"}, {64, "manual"}, {128, "hydro"}, {256, "constraint"}} {
+	}{{8, "nonground"}, {16, "nodata"}, {32, "filledOutput"}, {64, "manual"}, {128, "hydro"}, {256, "constraint"}, {512, "breakline"}, {1024, "waterbody"}} {
 		if int(r.Flags[i])&entry.bit != 0 {
 			r.Counts[entry.key] += delta
 		}

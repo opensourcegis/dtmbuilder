@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // All job/cache fields are protected by studio.Mutex. Raster/result snapshots
@@ -31,6 +32,9 @@ func (s *studio) startContourJob(p ContourParams) error {
 	if s.busy || s.result == nil {
 		return errors.New("create/open a DTM and wait for terrain extraction")
 	}
+	if len(s.terrainFeatures) > 0 && (p.AverageFactor != 1 || p.SmoothRadius != 0 || p.RegionalRadius != 0) {
+		return errors.New("protected terrain features need average factor 1 and box/regional means disabled; choose the constrained high-resolution preset")
+	}
 	s.invalidateContours(false)
 	ctx, cancel := context.WithCancel(context.Background())
 	s.contourCancel = cancel
@@ -41,8 +45,10 @@ func (s *studio) startContourJob(p ContourParams) error {
 	job := s.contourJob
 	g, z, flags, revision := s.grid, s.result.DTM, s.result.Flags, s.edits.Revision
 	prior, dirty := s.contourCache, s.contourDirty
+	features := append([]TerrainFeature{}, s.terrainFeatures...)
 	go func() {
 		defer cancel()
+		started := time.Now()
 		c, cache, e := generateContoursCached(ctx, g, z, p, revision, func(n int, m string) {
 			s.Lock()
 			defer s.Unlock()
@@ -51,6 +57,12 @@ func (s *studio) startContourJob(p ContourParams) error {
 				s.message = m
 			}
 		}, prior, dirty, flags)
+		if e == nil {
+			e = clipWaterContours(ctx, g, c, features)
+		}
+		if e == nil {
+			e = assessWaterBanks(ctx, g, z, flags, c, features)
+		}
 		s.Lock()
 		defer s.Unlock()
 		if s.contourJob != job || s.grid != g || s.edits.Revision != revision {
@@ -67,6 +79,8 @@ func (s *studio) startContourJob(p ContourParams) error {
 		}
 		c.Generation = job
 		c.Constraints = append([]ContourConstraint{}, s.constraints...)
+		c.TerrainFeatures = features
+		c.Performance.TotalMilliseconds = float64(time.Since(started).Microseconds()) / 1000
 		s.contours = c
 		s.contourCache = cache
 		s.contourDirty = cellRect{}

@@ -23,7 +23,7 @@ type Desktop struct {
 func runDesktop(s *studio) error {
 	app := &Desktop{s: s}
 	return wails.Run(&options.App{
-		Title: "Terrain Studio GIS · Live Contours · UI Update", Width: 1550, Height: 1000, MinWidth: 1150, MinHeight: 740,
+		Title: "Terrain Studio GIS · Protected Terrain", Width: 1550, Height: 1000, MinWidth: 1150, MinHeight: 740,
 		BackgroundColour: &options.RGBA{R: 245, G: 247, B: 249, A: 255},
 		AssetServer:      &assetserver.Options{Handler: s}, Bind: []interface{}{app},
 		OnStartup: func(ctx context.Context) { app.ctx = ctx },
@@ -37,7 +37,7 @@ func runDesktop(s *studio) error {
 			answer, e := wruntime.MessageDialog(ctx, wruntime.MessageDialogOptions{Type: wruntime.QuestionDialog, Title: "Unsaved terrain edits", Message: "Close without saving your manually edited DTM?", Buttons: []string{"Yes", "No"}, DefaultButton: "No", CancelButton: "No"})
 			return e != nil || answer != "Yes"
 		},
-		SingleInstanceLock: &options.SingleInstanceLock{UniqueId: "terrain-studio-gis-live-contours-v3", OnSecondInstanceLaunch: func(options.SecondInstanceData) { wruntime.WindowUnminimise(app.ctx); wruntime.WindowShow(app.ctx) }},
+		SingleInstanceLock: &options.SingleInstanceLock{UniqueId: "terrain-studio-gis-protected-terrain-v4", OnSecondInstanceLaunch: func(options.SecondInstanceData) { wruntime.WindowUnminimise(app.ctx); wruntime.WindowShow(app.ctx) }},
 		OnShutdown: func(context.Context) {
 			s.Lock()
 			defer s.Unlock()
@@ -102,7 +102,7 @@ func (d *Desktop) Export(layer string) (string, error) {
 	var report []byte
 	if layer == "report" && d.s.result != nil {
 		name = "terrain-report.json"
-		report, _ = json.MarshalIndent(map[string]any{"input": d.s.name, "parameters": d.s.params, "counts": d.s.result.Counts, "edits": d.s.edits.Audit, "method": d.s.resultMethod, "flags": "1 low, 2 high, 4 spike, 8 non-ground, 16 original NoData, 32 filled output, 64 manual edit, 128 hydroflatten, 256 contour pin; bitwise combined", "contours": contourReport(d.s.grid, d.s.contours), "constraints": d.s.constraints}, "", "  ")
+		report, _ = json.MarshalIndent(map[string]any{"input": d.s.name, "parameters": d.s.params, "counts": d.s.result.Counts, "edits": d.s.edits.Audit, "method": d.s.resultMethod, "flags": "1 low, 2 high, 4 spike, 8 non-ground, 16 original NoData, 32 filled output, 64 manual edit, 128 hydroflatten, 256 contour pin, 512 breakline, 1024 locked waterbody; bitwise combined", "contours": contourReport(d.s.grid, d.s.contours), "constraints": d.s.constraints, "terrainFeatures": d.s.terrainFeatures}, "", "  ")
 	}
 	d.s.Unlock()
 	if report == nil && (g == nil || z == nil) {

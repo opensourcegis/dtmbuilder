@@ -21,12 +21,18 @@ type ContourParams struct {
 	ElevationQuantum float64 `json:"elevationQuantum"`
 	ElevationUnit    string  `json:"elevationUnit"`
 	PreserveHydro    bool    `json:"preserveHydro"`
+	EdgePasses       int     `json:"edgePasses"`
+	EdgeThreshold    float64 `json:"edgeThreshold"`
+	MaxSurfaceChange float64 `json:"maxSurfaceChange"`
 }
 
 func defaultContourParams() ContourParams {
 	return ContourParams{Interval: 1, IndexEvery: 5, AverageFactor: 1, MinArea: 50, PreserveHydro: true}
 }
 func (p ContourParams) validate() error {
+	if p.EdgePasses < 0 || p.EdgePasses > 12 || !validNumber(p.EdgeThreshold) || p.EdgeThreshold < 0 || p.EdgePasses > 0 && p.EdgeThreshold <= 0 || !validNumber(p.MaxSurfaceChange) || p.MaxSurfaceChange < 0 || p.MaxSurfaceChange > 1e8 {
+		return errors.New("edge filtering needs 0–12 passes, a positive height contrast when enabled, and a finite nonnegative surface-change limit")
+	}
 	if !validNumber(p.ElevationQuantum) || p.ElevationQuantum < 0 || p.ElevationQuantum > 1e8 {
 		return errors.New("elevation rounding step must be finite and between 0 and 100,000,000 height units; 0 disables rounding")
 	}
@@ -49,17 +55,19 @@ type ContourLine struct {
 	AreaM2    *float64    `json:"areaM2,omitempty"`
 }
 type ContourSet struct {
-	Constraints       []ContourConstraint `json:"constraints"`
-	Generation        uint64              `json:"generation"`
-	Performance       ContourPerformance  `json:"performance"`
-	Params            ContourParams       `json:"parameters"`
-	Revision          int                 `json:"revision"`
-	Lines             []ContourLine       `json:"lines"`
-	Surface           *Grid               `json:"-"`
-	Segments          int                 `json:"segments"`
-	RemovedSmallLoops int                 `json:"removedSmallLoops"`
-	RemovedShortLines int                 `json:"removedShortLines"`
-	Quality           ContourQuality      `json:"quality"`
+	TerrainFeatures      []TerrainFeature    `json:"terrainFeatures"`
+	WaterClippedSegments int                 `json:"waterClippedSegments"`
+	Constraints          []ContourConstraint `json:"constraints"`
+	Generation           uint64              `json:"generation"`
+	Performance          ContourPerformance  `json:"performance"`
+	Params               ContourParams       `json:"parameters"`
+	Revision             int                 `json:"revision"`
+	Lines                []ContourLine       `json:"lines"`
+	Surface              *Grid               `json:"-"`
+	Segments             int                 `json:"segments"`
+	RemovedSmallLoops    int                 `json:"removedSmallLoops"`
+	RemovedShortLines    int                 `json:"removedShortLines"`
+	Quality              ContourQuality      `json:"quality"`
 }
 type contourNodeKey struct {
 	level int64
@@ -85,6 +93,9 @@ func contourSurface(ctx context.Context, g *Grid, z []float32, p ContourParams, 
 	if len(flags) != 0 && len(flags) != len(z) {
 		return nil, errors.New("water flags do not match the elevation grid")
 	}
+	if e := validateConstraintFilters(p, flags); e != nil {
+		return nil, e
+	}
 	f := p.AverageFactor
 	w, h := g.W/f, g.H/f
 	if w < 2 || h < 2 {
@@ -106,6 +117,14 @@ func contourSurface(ctx context.Context, g *Grid, z []float32, p ContourParams, 
 				for xx := x * f; xx < (x+1)*f; xx++ {
 					j := yy*g.W + xx
 					v := z[j]
+					if len(flags) > 0 && int(flags[j])&(512|1024) != 0 {
+						if f != 1 || p.SmoothRadius != 0 || p.RegionalRadius != 0 {
+							return nil, errors.New("protected breaklines/waterbodies require block average 1 and box/regional means disabled; use edge-preserving filtering instead")
+						}
+						if valid(v) {
+							water[y*w+x] = v
+						}
+					}
 					if !valid(v) {
 						ok = false
 					}
@@ -135,6 +154,10 @@ func contourSurface(ctx context.Context, g *Grid, z []float32, p ContourParams, 
 				a[y*w+x] = nan
 			}
 		}
+	}
+	var baseline []float32
+	if p.MaxSurfaceChange > 0 {
+		baseline = append([]float32(nil), a...)
 	}
 	// USGS SIR 2012–5167, p. 21: round elevations, then filter. The step
 	// uses declared SOURCE height units; horizontal CRS units are not evidence
@@ -173,6 +196,13 @@ func contourSurface(ctx context.Context, g *Grid, z []float32, p ContourParams, 
 			a[i] = v
 		}
 	}
+	if p.EdgePasses > 0 {
+		var err error
+		a, err = edgePreservingSurface(ctx, a, w, h, p.EdgePasses, p.EdgeThreshold, water)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	if p.RegionalRadius > 0 {
 		for pass := 0; pass < 3; pass++ {
@@ -183,6 +213,22 @@ func contourSurface(ctx context.Context, g *Grid, z []float32, p ContourParams, 
 			}
 			for i, v := range water {
 				a[i] = v
+			}
+		}
+	}
+	if baseline != nil {
+		for i, v := range a {
+			if i%4096 == 0 {
+				if e := ctx.Err(); e != nil {
+					return nil, e
+				}
+			}
+			if valid(v) && valid(baseline[i]) {
+				lo, hi := float64(baseline[i])-p.MaxSurfaceChange, float64(baseline[i])+p.MaxSurfaceChange
+				a[i] = float32(math.Max(lo, math.Min(hi, float64(v))))
+				if math.Abs(float64(a[i])-float64(baseline[i])) > p.MaxSurfaceChange {
+					a[i] = math.Nextafter32(a[i], baseline[i])
+				}
 			}
 		}
 	}
@@ -231,6 +277,21 @@ func contourSurface(ctx context.Context, g *Grid, z []float32, p ContourParams, 
 		}
 	}
 	return &Grid{W: w, H: h, Z: a, Tags: tags, Order: g.Order, PixelSize: g.PixelSize * float64(f)}, nil
+}
+
+func validateConstraintFilters(p ContourParams, flags []float32) error {
+	if p.AverageFactor == 1 && p.SmoothRadius == 0 && p.RegionalRadius == 0 {
+		return nil
+	}
+	for _, f := range flags {
+		if int(f)&(512|1024) != 0 {
+			return errors.New("protected breaklines/waterbodies require block average 1 and box/regional means disabled; use edge-preserving filtering instead")
+		}
+		if p.AverageFactor != 1 && int(f)&256 != 0 {
+			return errors.New("pinned contour elevations require block average factor 1; remove pins before averaging")
+		}
+	}
+	return nil
 }
 
 func areaScaleM2(g *Grid) float64 {

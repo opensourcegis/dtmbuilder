@@ -17,18 +17,18 @@ and US-specific choices that must not be silently applied to other datasets.
 | Match 1:24,000 cartographic detail while retaining small peaks | 1–4, 12–17 | **Not established.** Resolution and filters are user choices. No validation against representative surveyed terrain or a target map was supplied. Averaging can remove real small features. |
 | Contour interval supported statistically by elevation accuracy | 4, 7 | **Not automated.** The user sets the interval. Grid spacing or smooth appearance does not establish vertical accuracy. Independent control is still needed. |
 | Cross double-line streams approximately at right angles | 1, 3, 21 | **Missing.** There is no river-area/centre-line enforcement or in-river straightening. |
-| Avoid crossing waterbody polygons | 4, 9, 18 | **Partial.** A known manually flattened water interior is protected through filtering. No automatic lake polygon import, shoreline routing, buffer or whole-polygon crossing check exists. A water level equal to a contour is flagged, not silently shifted. |
-| Crenulations follow reentrants/stream channels | 4–5, 12 | **Missing.** No directed stream constraints or drainage-aware interpolator. |
+| Avoid crossing waterbody polygons | 4, 9, 18 | **Partial.** A known manually flattened water interior is protected through filtering. Drawn locked water polygons now clip contour interiors exactly and support island exclusions. Automatic hydrography import, shoreline routing and lake buffering remain missing. A water level equal to a contour is flagged, not silently shifted. |
+| Crenulations follow reentrants/stream channels | 4–5, 12 | **Partial.** A drawn downstream graded breakline locks a locally non-increasing endpoint profile. No drainage-network conditioning, confluence logic or drainage-aware surface interpolator is implemented. |
 | Depression contours do not cross single-line streams more than once | 4, 21 | **Missing.** No depression/stream intersection classification. |
 | Handle swamps, lagoons, canals and problematic water classifications separately | 4, 8, 12 | **Missing.** Hydrographic feature types are not ingested. Do not treat the manual Hydroflatten tool as an automatic water classifier. |
 | Feet, NAD83 and NAVD88 | 4–6 | **US-specific choice, not a universal default.** The app retains the source CRS and requires declared elevation units for a physical rounding preset. It does not infer or transform vertical datums. GeoPackage uses an offline EPSG WKT catalog; unknown CRS remains explicitly undefined. |
 | NED points plus NHD flowlines, waterbody/area polygons and disconnected streams | 8 | **Missing.** Input is a single-band elevation GeoTIFF. There is no NHD data model/import pipeline. |
 | Precompute lake minimum/maximum/mean/standard deviation | 12 | **Missing.** Manual known water elevations are used instead. |
-| Detect reversed flow direction using endpoints; exclude flowlines crossing hills | 12–15 | **Missing.** No stream direction or longitudinal-profile checks. |
+| Detect reversed flow direction using endpoints; exclude flowlines crossing hills | 12–15 | **Partial.** Drawn downstream-grade endpoints are validated. There is no imported-network direction correction or longitudinal-profile check against hills. |
 | Process a quadrangle with 10% overlap, then clip to its boundary | 12, 21, 24 | **Missing.** Processing covers the loaded raster. The incremental engine has exact filter-support halos, but those are not a substitute for buffered geographic input, quad clipping or cross-dataset seam matching. |
 | TopoToRaster at 1/27 arc-second from 1/3 arc-second points and flowlines; five iterations | 12, 16–18 | **Missing.** Morphological DSM-to-DTM extraction, block averaging and box means are different algorithms. No TopoToRaster/ANUDEM equivalence or accuracy improvement is claimed. The app does not upsample to invent measured detail. |
 | Subdivide interpolation and mosaic outputs | 18 | **Different purpose.** The app caches marching-squares tiles and reuses unaffected work after edits. It does not implement the report's 36 TopoToRaster runs or interpolation mosaic. |
-| Adjust represented/unrepresented lakes using statistics and temporary contour intersections | 18 | **Missing.** Known water levels are not adjusted automatically. |
+| Adjust represented/unrepresented lakes using statistics and temporary contour intersections | 18 | **Missing automatic adjustment.** Drawn waterbodies retain the entered known level, exclude interior contour geometry and warn about low adjacent banks; this is different from adjusting lake levels using the report's statistics/intersection procedure. |
 | Buffer lakes, with smaller buffers near adjacent waterbodies | 18 | **Missing.** No hydrographic polygon buffering or proximity logic. |
 | Densify river centre lines, step elevations down monotonically, IDW power 0.5 / 12 points, mask river areas | 18–21 | **Missing.** Polygon patch interpolation uses a different method and is not river grading. |
 | Mosaic terrain, river IDW surface, then waterbody surface | 21 | **Missing.** There are no separate hydrographic mosaics. |
@@ -71,10 +71,11 @@ when assessing an actual contour output:
   The report explicitly simplifies, applies PAEK and simplifies again (pp. 21–22).
   All three vector stages are absent. Thus contours may retain angular raster
   detail despite a smoother elevation surface.
-- **Hydrographic correctness is not established by manual flattening.** The app
-  cannot yet guarantee no lake crossings, drainage-aligned reentrants, downhill
-  river surfaces or approximately perpendicular double-line river crossings.
-  Those need the missing hydrographic inputs, conditioning and checks.
+- **Hydrographic correctness is not established by manual flattening.** Drawn locked water polygons now exclude interior contour geometry and preserve
+  island exclusions. Graded breaklines constrain a local downstream profile.
+  These do not establish drainage-aligned reentrants, connected downhill river
+  surfaces or perpendicular double-line river crossings; those require the
+  missing hydrographic inputs, conditioning and checks.
 - **Direct contour editing is an application extension.** The report's automatic
   process edits NHD inputs and regenerates contours (pp. 1, 23). Here, a drag
   changes the DTM and locks four samples locally. That maintains the local
@@ -115,3 +116,12 @@ lake, river-area, directed flowline and disconnected-stream data are needed, alo
 with target scale, contour interval, horizontal/vertical CRS and independent
 accuracy criteria. Absence of those data does not prevent using the features
 implemented here, but it prevents a claim of full report compliance or accuracy.
+
+## Subsequent research-based constraints
+
+See [the research review](contour-research.md) for the LiDAR smoothing and
+feature-preservation papers, exact access limits and the independent adaptation.
+Protected drawn breaklines, level water polygons with islands, exact water-interior
+clipping, bounded edge filtering and a low-bank diagnostic are now implemented.
+They improve user-supplied local constraints without implementing the report's
+automatic hydrographic conditioning, PAEK or full discrepancy QA.

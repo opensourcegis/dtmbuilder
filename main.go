@@ -48,7 +48,10 @@ var brushJS string
 //go:embed contour_edit.js
 var contourEditJS string
 
-const studioHealthID = "terrain-studio-go-live-contours-v3"
+//go:embed terrain_features.js
+var terrainFeaturesJS string
+
+const studioHealthID = "terrain-studio-go-protected-terrain-v4"
 
 type studio struct {
 	sync.Mutex
@@ -72,6 +75,9 @@ type studio struct {
 	contourCache         *contourCache
 	contourDirty         cellRect
 	constraints          []ContourConstraint
+	terrainFeatures      []TerrainFeature
+	nextFeatureID        int
+	featureGeneration    uint64
 	nextConstraintID     int
 	extentGrid           *Grid
 	extentMin, extentMax float64
@@ -229,7 +235,7 @@ func (s *studio) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == "GET" {
-		assets := map[string]struct{ body, kind string }{"/app.js": {appJS, "text/javascript"}, "/editor.js": {editorJS, "text/javascript"}, "/style.css": {styleCSS, "text/css"}, "/contours.js": {contoursJS, "text/javascript"}, "/brush.js": {brushJS, "text/javascript"}, "/contour_edit.js": {contourEditJS, "text/javascript"}}
+		assets := map[string]struct{ body, kind string }{"/app.js": {appJS, "text/javascript"}, "/editor.js": {editorJS, "text/javascript"}, "/style.css": {styleCSS, "text/css"}, "/contours.js": {contoursJS, "text/javascript"}, "/brush.js": {brushJS, "text/javascript"}, "/contour_edit.js": {contourEditJS, "text/javascript"}, "/terrain_features.js": {terrainFeaturesJS, "text/javascript"}}
 		if a, ok := assets[r.URL.Path]; ok {
 			w.Header().Set("Content-Type", a.kind+"; charset=utf-8")
 			fmt.Fprint(w, a.body)
@@ -476,6 +482,45 @@ func (s *studio) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		reply(w, s.state())
+	case r.URL.Path == "/api/terrain-features" && r.Method == "GET":
+		s.Lock()
+		features := s.terrainFeatures
+		generation := s.featureGeneration
+		s.Unlock()
+		reply(w, map[string]any{"generation": generation, "features": features})
+	case r.URL.Path == "/api/terrain-features" && r.Method == "POST":
+		var q TerrainFeatureRequest
+		r.Body = http.MaxBytesReader(w, r.Body, 512<<10)
+		d := json.NewDecoder(r.Body)
+		d.DisallowUnknownFields()
+		if e := d.Decode(&q); e != nil {
+			http.Error(w, e.Error(), 400)
+			return
+		}
+		s.Lock()
+		defer s.Unlock()
+		if e := s.applyTerrainFeature(q); e != nil {
+			http.Error(w, e.Error(), 409)
+			return
+		}
+		reply(w, s.state())
+	case r.URL.Path == "/api/terrain-features/remove" && r.Method == "POST":
+		var q struct {
+			ID       int `json:"id"`
+			Revision int `json:"revision"`
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1024)
+		if e := json.NewDecoder(r.Body).Decode(&q); e != nil {
+			http.Error(w, e.Error(), 400)
+			return
+		}
+		s.Lock()
+		defer s.Unlock()
+		if e := s.removeTerrainFeature(q.ID, q.Revision); e != nil {
+			http.Error(w, e.Error(), 409)
+			return
+		}
+		reply(w, s.state())
 	case r.URL.Path == "/api/edit" && r.Method == "POST":
 		var q EditRequest
 		r.Body = http.MaxBytesReader(w, r.Body, 32768)
@@ -585,7 +630,7 @@ func (s *studio) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Disposition", `attachment; filename="terrain-report.json"`)
-		reply(w, map[string]any{"input": s.name, "width": s.grid.W, "height": s.grid.H, "parameters": s.params, "counts": s.result.Counts, "edits": s.edits.Audit, "method": s.resultMethod, "flags": "1 low, 2 high, 4 spike, 8 non-ground, 16 original NoData, 32 filled output, 64 manual edit, 128 hydroflatten, 256 contour pin; bitwise combined", "fill_original_nodata_in_outputs": s.params.FillOutput, "contours": contourReport(s.grid, s.contours), "constraints": s.constraints})
+		reply(w, map[string]any{"input": s.name, "width": s.grid.W, "height": s.grid.H, "parameters": s.params, "counts": s.result.Counts, "edits": s.edits.Audit, "method": s.resultMethod, "flags": "1 low, 2 high, 4 spike, 8 non-ground, 16 original NoData, 32 filled output, 64 manual edit, 128 hydroflatten, 256 contour pin, 512 breakline, 1024 locked waterbody; bitwise combined", "fill_original_nodata_in_outputs": s.params.FillOutput, "contours": contourReport(s.grid, s.contours), "constraints": s.constraints, "terrainFeatures": s.terrainFeatures})
 	default:
 		http.NotFound(w, r)
 	}
@@ -620,11 +665,13 @@ func (s *studio) layer(k string) (*Grid, []float32) {
 	return nil, nil
 }
 func (s *studio) state() map[string]any {
-	m := map[string]any{"busy": s.busy, "progress": s.progress, "message": s.message, "error": s.failure, "ready": s.grid != nil, "complete": s.result != nil, "defaults": defaults(), "contourBusy": s.contourBusy, "constraints": s.constraints}
+	m := map[string]any{"busy": s.busy, "progress": s.progress, "message": s.message, "error": s.failure, "ready": s.grid != nil, "complete": s.result != nil, "defaults": defaults(), "contourBusy": s.contourBusy, "constraints": s.constraints, "terrainFeatures": s.terrainFeatures}
 	m["editing"] = map[string]any{"revision": s.edits.Revision, "undo": len(s.edits.Undo), "redo": len(s.edits.Redo), "audit": s.edits.Audit[max(0, len(s.edits.Audit)-8):]}
 	m["unsavedEdits"] = s.result != nil && s.result.Counts["manual"] > 0 && s.edits.Revision != s.edits.SavedRevision
+	m["terrainFeatures"] = featureSummaries(s.terrainFeatures)
+	m["featureGeneration"] = s.featureGeneration
 	if s.contours != nil {
-		m["contours"] = map[string]any{"revision": s.contours.Revision, "parameters": s.contours.Params, "lines": len(s.contours.Lines), "segments": s.contours.Segments, "removedSmallLoops": s.contours.RemovedSmallLoops, "removedShortLines": s.contours.RemovedShortLines, "quality": s.contours.Quality, "generation": s.contours.Generation, "performance": s.contours.Performance}
+		m["contours"] = map[string]any{"revision": s.contours.Revision, "parameters": s.contours.Params, "lines": len(s.contours.Lines), "segments": s.contours.Segments, "removedSmallLoops": s.contours.RemovedSmallLoops, "removedShortLines": s.contours.RemovedShortLines, "quality": s.contours.Quality, "generation": s.contours.Generation, "performance": s.contours.Performance, "waterClippedSegments": s.contours.WaterClippedSegments}
 	} else {
 		m["contours"] = nil
 	}
@@ -669,6 +716,10 @@ func preview(g *Grid, z []float32, layer string) image.Image {
 			if valid(v) {
 				if layer == "flags" {
 					switch {
+					case int(v)&1024 != 0:
+						c = color.NRGBA{30, 175, 205, 255}
+					case int(v)&512 != 0:
+						c = color.NRGBA{190, 65, 125, 255}
 					case int(v)&256 != 0:
 						c = color.NRGBA{180, 65, 160, 255}
 					case int(v)&128 != 0:

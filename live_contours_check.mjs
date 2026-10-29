@@ -18,10 +18,10 @@ try{
  page.on('pageerror',e=>errors.push(e.message));page.on('dialog',d=>d.accept());
  await page.goto(process.env.STUDIO_URL||'http://127.0.0.1:8789');
  await page.locator('#contourTab').click();await page.locator('#autoContours').uncheck();
- await page.locator('#contourHeightUnit').selectOption('m');await page.locator('#contourPreset').selectOption('cartographic');
- await page.locator('#contourBase').fill('.25');await page.locator('#contourBase').press('Tab');
  const chooser=page.waitForEvent('filechooser');await page.locator('#openDTM').click();await(await chooser).setFiles({name:'live-plane.tif',mimeType:'image/tiff',buffer:fixture()});
  await page.waitForFunction(()=>state.raster?.name==='live-plane.tif'&&state.complete&&!uploading&&after);
+ await page.locator('#contourHeightUnit').selectOption('m');await page.locator('#contourPreset').selectOption('cartographic');
+ await page.locator('#contourBase').fill('.25');await page.locator('#contourBase').press('Tab');
  await page.locator('#contourTab').click();await page.locator('#autoContours').check();
  const ready=()=>page.waitForFunction(()=>!state.contourBusy&&state.contours?.revision===state.editing?.revision&&contourData?.generation===state.contours?.generation);
  await ready();

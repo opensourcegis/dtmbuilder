@@ -74,6 +74,11 @@ func generateContoursCached(ctx context.Context, g *Grid, z []float32, p Contour
 	var e error
 	incremental := prior != nil && prior.Source == g && prior.Params == p && dirty.Valid
 	if incremental {
+		if len(masks) > 0 {
+			if err := validateConstraintFilters(p, masks[0]); err != nil {
+				return nil, nil, err
+			}
+		}
 		surface, changed, e = updateContourSurface(ctx, g, z, p, prior.Surface, dirty, masks...)
 	} else {
 		surface, e = contourSurface(ctx, g, z, p, masks...)
@@ -219,7 +224,7 @@ func updateContourSurface(ctx context.Context, g *Grid, z []float32, p ContourPa
 		copyGrid := *old
 		return &copyGrid, cellRect{}, nil
 	}
-	radius := p.SmoothRadius + 3*p.RegionalRadius
+	radius := p.SmoothRadius + p.EdgePasses + 3*p.RegionalRadius
 	changed := core.expand(radius, w, h)
 	input := changed.expand(radius, w, h)
 	// The surface constructor needs at least 2x2 blocks even for a one-cell edit.

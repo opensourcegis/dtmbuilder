@@ -5,7 +5,7 @@ archive; its 20 existing Go tests passed before changes.
 
 ## Completed checks
 
-- **39 Go tests passed**, including the seven cartographic regressions for round-before-filter
+- **49 Go tests passed**, including the seven cartographic regressions for round-before-filter
   order, plateau-noise contours versus meaningful relief, water constraints
   through rounding/focal/regional filters and averaging, constraint history,
   source coverage/change measurements, invalid input/cancellation/empty surfaces,
@@ -113,6 +113,59 @@ Existing live-contour, GeoPackage/GDAL, cartographic-water and brush browser
 regressions also passed after the review. These checks use headless Chromium on
 Linux; they do not establish native Windows behaviour or a universal frame rate.
 
+## Research-based drawn terrain constraints
+
+- The bounded edge filter reduced synthetic plateau-noise contours with both
+  size filters disabled, retained a five-unit bank, preserved NoData and kept
+  changes within the specified source-height cap. This is not survey validation.
+- Graded/preserve breaklines retained their protected samples through rounding
+  and filtering. A continuous fixed corridor blocked diffusion from one side to
+  the other. Self-crossing lines and uphill downstream endpoints were rejected.
+- Scanline water selection matched independent point-in-polygon membership for
+  concave, slanted and half-cell boundary fixtures. A full API request with 16
+  islands of 256 vertices each passed; its payload exceeds the former 128 KiB
+  request limit and is accepted within the new 512 KiB limit.
+- Waterbody tests covered island exclusions, NoData, conflicting known levels,
+  self-crossing/overlapping invalid rings, filter/averaging restrictions and
+  protected samples in cropped edge margins.
+- Vector clipping retained outside pieces, island contours and shoreline-
+  coincident segments, and respected cancellation. A low-bank diagnostic flagged
+  terrain inconsistent with a supplied water level. Its threshold is an app
+  diagnostic, not the report's hydrographic discrepancy test.
+- Feature addition/removal and Undo/Redo retained constraints and terrain
+  consistently. Audit entries do not retain hidden history snapshots; branching
+  history releases discarded Redo accounting.
+- A browser workflow drew preserve and downstream-grade breaklines, then a level
+  waterbody with an island. It verified endpoint heights, zero protected-sample
+  mismatches, 3 retained island contours, zero water-interior segments, atomic
+  rejection of a conflicting edit, removal/Undo and DTM/GPKG exports.
+- Independent GDAL/Fiona/Shapely/Rasterio checks opened the contour, breakline and
+  waterbody layers, checked source CRS and height attributes, retained the island
+  polygon, found zero contour length inside open water, and confirmed the saved
+  DTM's known water and endpoint heights.
+- Full and incremental edge-filter surfaces and line geometry matched at tile
+  boundaries and raster edges. State polling returns summaries, with vector
+  feature geometry fetched only on feature-generation changes.
+
+Three-iteration constrained-contour backend benchmarks on the same Xeon machine:
+
+| Grid/workload | Mean time | Allocated per operation |
+| --- | ---: | ---: |
+| Full constrained contours, 2048×2048 | 776 ms | 104 MB |
+| Local constrained update, 2048×2048 | 145 ms | 42 MB |
+| Local constrained update, 4000×4000 | 459 ms | 152 MB |
+
+These include four edge passes with a 0.5-unit contrast, a 0.2-unit change cap,
+a protected breakline, a 300×300-cell waterbody, water clipping and bank QA on a
+simple slope. They exclude edit snapshot copying, previews, transfer, rendering
+and export; dense geometry and other machines can be slower. The initial full
+edge-filter run costs more than the box-mean baseline. These measurements support
+incremental reuse, not an out-of-core or universal responsiveness claim.
+
+See [the research review](contour-research.md) for the papers, access limitations,
+algorithm details and the distinction between an independent adaptation and a
+reproduction of published normal-vector smoothing.
+
 ## Reproduction
 
 ```sh
@@ -132,7 +185,9 @@ node cartographic_check.mjs
 node brush_check.mjs
 node live_contours_check.mjs
 node ui_performance_check.mjs
+node constrained_terrain_check.mjs
 python geopackage_check.py
+python constrained_terrain_gis_check.py
 python fixture_check.py
 ```
 
@@ -153,8 +208,8 @@ Windows desktop launch, native file dialogs and WebView2 behaviour have **not**
 been exercised in this Linux environment. No user GeoTIFF crop or surveyed control
 points were supplied; no project-specific accuracy improvement is claimed.
 
-Automatic hydrography ingestion, river grading/flow enforcement, shoreline
+Automatic hydrography ingestion, full river-area grading/network flow enforcement, shoreline
 routing, PAEK/vector smoothing, depression classification and buffered AOI processing
 remain further work. See [the complete report audit](report-audit.md). Contour
-pins are session constraints, with an exported audit record; a reloadable
+pins and drawn terrain features are session constraints, with exported geometry/audit records; a reloadable
 constraint project is not implemented. This is not the full USGS workflow.

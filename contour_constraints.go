@@ -117,7 +117,7 @@ func (s *studio) pinContour(q ContourPinRequest) error {
 			return errors.New("constraint would overflow the DTM height range")
 		}
 		flags := int(s.result.Flags[i])
-		if value != old && flags&(128|256) != 0 {
+		if value != old && flags&(128|256|512|1024) != 0 {
 			return errors.New("constraint conflicts with a protected water level or another contour pin; remove that pin or choose another location")
 		}
 		nextFlags := flags | 64
