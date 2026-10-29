@@ -16,6 +16,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,7 +48,7 @@ var brushJS string
 //go:embed contour_edit.js
 var contourEditJS string
 
-const studioHealthID = "terrain-studio-go-live-contours-v2"
+const studioHealthID = "terrain-studio-go-live-contours-v3"
 
 type studio struct {
 	sync.Mutex
@@ -294,7 +295,11 @@ func (s *studio) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.grid = g
-		s.name = filepath.Base(r.Header.Get("X-File-Name"))
+		name := r.Header.Get("X-File-Name")
+		if decoded, err := url.PathUnescape(name); err == nil {
+			name = decoded
+		}
+		s.name = filepath.Base(name)
 		s.result = nil
 		s.resetEdits()
 		if r.URL.Query().Get("mode") == "dtm" {
@@ -527,6 +532,8 @@ func (s *studio) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.Lock()
 		if s.contourCancel != nil {
 			s.invalidateContours(false)
+			s.progress = 0
+			s.message = "Contour refresh cancelled"
 		}
 		if s.cancel != nil {
 			s.cancel()
@@ -629,6 +636,7 @@ func (s *studio) state() map[string]any {
 		lo, hi := s.extentMin, s.extentMax
 		m["raster"] = map[string]any{"name": s.name, "width": s.grid.W, "height": s.grid.H, "min": lo, "max": hi, "pixelSize": s.grid.PixelSize, "georeferenced": len(s.grid.Tags[34735].Data) > 0}
 		m["raster"].(map[string]any)["horizontalUnit"] = horizontalUnit(s.grid)
+		m["raster"].(map[string]any)["areaFilterAvailable"] = areaScaleM2(s.grid) > 0
 	}
 	if s.result != nil {
 		m["counts"] = s.result.Counts

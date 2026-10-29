@@ -23,7 +23,7 @@ type Desktop struct {
 func runDesktop(s *studio) error {
 	app := &Desktop{s: s}
 	return wails.Run(&options.App{
-		Title: "Terrain Studio GIS · Live Contours", Width: 1550, Height: 1000, MinWidth: 1150, MinHeight: 740,
+		Title: "Terrain Studio GIS · Live Contours · UI Update", Width: 1550, Height: 1000, MinWidth: 1150, MinHeight: 740,
 		BackgroundColour: &options.RGBA{R: 245, G: 247, B: 249, A: 255},
 		AssetServer:      &assetserver.Options{Handler: s}, Bind: []interface{}{app},
 		OnStartup: func(ctx context.Context) { app.ctx = ctx },
@@ -37,7 +37,7 @@ func runDesktop(s *studio) error {
 			answer, e := wruntime.MessageDialog(ctx, wruntime.MessageDialogOptions{Type: wruntime.QuestionDialog, Title: "Unsaved terrain edits", Message: "Close without saving your manually edited DTM?", Buttons: []string{"Yes", "No"}, DefaultButton: "No", CancelButton: "No"})
 			return e != nil || answer != "Yes"
 		},
-		SingleInstanceLock: &options.SingleInstanceLock{UniqueId: "terrain-studio-gis-live-contours-v2", OnSecondInstanceLaunch: func(options.SecondInstanceData) { wruntime.WindowUnminimise(app.ctx); wruntime.WindowShow(app.ctx) }},
+		SingleInstanceLock: &options.SingleInstanceLock{UniqueId: "terrain-studio-gis-live-contours-v3", OnSecondInstanceLaunch: func(options.SecondInstanceData) { wruntime.WindowUnminimise(app.ctx); wruntime.WindowShow(app.ctx) }},
 		OnShutdown: func(context.Context) {
 			s.Lock()
 			defer s.Unlock()

@@ -10,7 +10,7 @@ function beginContourDrag(e,p){
  for(const item of contourPaths){
   if(p.x<item.minx-12/sx||p.x>item.maxx+12/sx||p.y<item.miny-12/sy||p.y>item.maxy+12/sy)continue;
   const line=item.line;
-  for(let i=0;i<line.points.length;i++){const point=line.points[i],d=Math.hypot((point.x-p.x)*sx,(point.y-p.y)*sy);if(d<distance){distance=d;best={line:line.id,vertex:i,point}}}
+  for(const block of item.blocks){if(p.x<block.minx-12/sx||p.x>block.maxx+12/sx||p.y<block.miny-12/sy||p.y>block.maxy+12/sy)continue;for(let i=block.start;i<block.end;i++){const point=line.points[i],d=Math.hypot((point.x-p.x)*sx,(point.y-p.y)*sy);if(d<distance){distance=d;best={line:line.id,vertex:i,point}}}}
  }
  if(!best){$('selectionInfo').textContent='Click within 12 screen pixels of a contour vertex.';return}
  clearError();actionEpoch++;editingPending=true;
@@ -31,7 +31,7 @@ async function finishContourDrag(e){
  if(!contourDrag||e.pointerId!==contourDrag.id)return;moveContourDrag(e);
  const d=contourDrag;contourDrag=null;if(surface.hasPointerCapture(d.id))surface.releasePointerCapture(d.id);
  try{update(await(await api('contours/pin',{method:'POST',body:JSON.stringify({line:d.line,vertex:d.vertex,x:d.target.x,y:d.target.y,radius:d.radius,revision:d.revision,generation:d.generation})})).json());await refreshImages()}
- catch(e){fail(e)}finally{editingPending=false;updateGIS(state)}
+ catch(e){fail(e)}finally{editingPending=false;updateGIS(state);draw()}
 }
 function drawContourPins(ctx,g){
  if(!state.raster)return;const project=p=>({x:g.w/2+(p.x/state.raster.width-camera.x)*g.dw,y:g.h/2+(p.y/state.raster.height-camera.y)*g.dh});
@@ -54,7 +54,7 @@ function updateContourPins(s){
 async function removeContourPin(id){
  if(editingPending||state.busy)return;editingPending=true;actionEpoch++;clearError();updateGIS(state);
  try{update(await(await api('contours/unpin',{method:'POST',body:JSON.stringify({id,revision:state.editing.revision})})).json());await refreshImages()}
- catch(e){fail(e)}finally{editingPending=false;updateGIS(state)}
+ catch(e){fail(e)}finally{editingPending=false;updateGIS(state);draw()}
 }
 surface.addEventListener('pointermove',moveContourDrag);surface.addEventListener('pointerup',finishContourDrag);
 for(const name of ['pointercancel','lostpointercapture'])surface.addEventListener(name,e=>{if(contourDrag?.id===e.pointerId)cancelContourDrag()});

@@ -54,12 +54,13 @@ were checked again against the supplied report. The following distinctions matte
 when assessing an actual contour output:
 
 - **The treatment is optional.** The initial "Normal DTM contours" preset has
-  rounding and focal filtering disabled and a 50 m² minimum loop area. To use the
+  rounding and focal filtering disabled and a 50 m² minimum loop area when the
+  raster has recognized projected coordinates (otherwise the preset uses 0). To use the
   implemented report-inspired treatment, first declare source elevation units,
   then select "USGS-inspired · round then filter". This selects 0.03048 m or
   0.1 international foot rounding, a 3×3 focal mean and no size filtering. Changing
-  the unit declaration does not convert elevations or automatically reapply that
-  preset; select the preset again after changing units.
+  the unit declaration does not convert elevations. While this preset is active,
+  changing the declaration automatically updates the rounding step.
 - **Only the operation order and rounding increment are reproduced.** Page 21
   specifies round-to-tenth-of-a-foot followed by filtering. It does not specify
   the filter kernel/window there. The application's 3×3 arithmetic mean is an

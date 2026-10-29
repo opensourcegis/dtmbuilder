@@ -71,6 +71,12 @@ uses running sums rather than a nested neighbourhood loop. The viewer caches
 canvas paths and reuses the unchanged source preview; state polling does not
 rescan the immutable source elevation range on every request.
 
+The viewer combines redraw requests into one animation frame and retains its
+canvas allocation between paints. Contour display preparation yields during
+large geometry loads and skips distant vertex groups when selecting a handle.
+Unchanged history is retained between polls. **Cancel refresh** stops contour
+work; changing the DTM or settings can start a new refresh afterwards.
+
 On the onboarding Linux machine (Xeon Platinum 8573C), three-iteration backend
 benchmarks averaged approximately **288 ms for a full 4.2-million-cell run**,
 **112 ms for a local update on that grid**, and **503 ms for a local update on
@@ -116,7 +122,8 @@ removal so real small landforms are not hidden automatically.
 3. Select **USGS-inspired · round then filter**. The rounding step becomes
    0.03048 for metre elevations, 0.1 for international feet, or the equivalent in
    US survey feet. If height units are unspecified, rounding stays disabled;
-   enter a suitable step explicitly or declare units and reapply the preset.
+   enter a suitable step explicitly or declare units. While the preset is active,
+   changing that declaration updates its rounding step automatically.
 4. Compare contours with the normal/full-detail surface. Inspect banks, ridges,
    embankments and known depressions. A finer grid or smoother line does not prove
    better ground accuracy. Excessive rounding can remove real relief.

@@ -5,7 +5,7 @@ archive; its 20 existing Go tests passed before changes.
 
 ## Completed checks
 
-- **38 Go tests passed**, including the seven cartographic regressions for round-before-filter
+- **39 Go tests passed**, including the seven cartographic regressions for round-before-filter
   order, plateau-noise contours versus meaningful relief, water constraints
   through rounding/focal/regional filters and averaging, constraint history,
   source coverage/change measurements, invalid input/cancellation/empty surfaces,
@@ -77,6 +77,42 @@ browser rendering. They are not Windows latency guarantees. Dense/noisy terrain
 can be slower. The 16-million-cell input limit remains; this is an in-memory
 engine and still performs whole-grid quality comparisons and global line joining.
 
+## UI and responsiveness review
+
+The following fixes passed the additional `ui_performance_check.mjs` browser check:
+
+- Opening the unreferenced demonstration with default settings now generates
+  contours; the Normal preset uses zero minimum area when physical area cannot
+  be determined. Other presets do not inherit a previous small-loop threshold.
+- The active report-inspired preset updates its rounding increment when the
+  declared height unit changes. This does not convert the elevation raster.
+- Identify responses arriving out of order cannot replace the latest cell or
+  reuse heights from an older terrain revision. Undo/Redo invalidate the inspector.
+- Cancelled file selection resets the DSM/DTM mode; the same file can be selected
+  again. Drag-and-drop respects unsaved-edit confirmation, and replacement
+  controls are blocked during an active edit. Uploaded Unicode/spaced filenames
+  are decoded for display.
+- Both the contour panel and processing panel can cancel a contour job. The
+  cancellation endpoint invalidates the job and clears its progress/status;
+  a new Go regression covers that transition.
+- A burst of 120 redraw requests produced one paint and no canvas size writes
+  at the existing viewport size. The viewer retains its backing store until
+  dimensions change, clears it before painting and shares an animation frame.
+- Preparing a synthetic 400,000-vertex display path yielded to UI callbacks and
+  retained its complete coordinate extent. Geometry download/JSON parsing and
+  actual canvas strokes are outside that preparation check. Hit testing uses
+  small vertex-group bounds to skip distant points; live dragging still passed.
+- Unchanged history nodes survive repeated polling. Obsolete contour downloads
+  are aborted, and path preparation checks that its generation is still current
+  before publishing.
+- At 900×700, the page has no horizontal overflow, the viewer fits above the
+  footer and the toolbar scrolls horizontally. The flag legend includes contour
+  pins, hydroflattening and manual edits with the correct colour priority.
+
+Existing live-contour, GeoPackage/GDAL, cartographic-water and brush browser
+regressions also passed after the review. These checks use headless Chromium on
+Linux; they do not establish native Windows behaviour or a universal frame rate.
+
 ## Reproduction
 
 ```sh
@@ -95,6 +131,7 @@ Playwright/Chromium and Python NumPy/Rasterio/Fiona respectively:
 node cartographic_check.mjs
 node brush_check.mjs
 node live_contours_check.mjs
+node ui_performance_check.mjs
 python geopackage_check.py
 python fixture_check.py
 ```
