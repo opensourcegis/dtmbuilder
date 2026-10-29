@@ -107,47 +107,44 @@ func segmentCross(a, b, c, d CellPoint) bool {
 }
 func selectCells(g *Grid, q EditRequest) ([]int, map[int]bool, error) {
 	if len(q.Points) == 0 || len(q.Points) > 256 {
-		return nil, nil, errors.New("select 3–256 polygon vertices, or one spike location")
+		return nil, nil, errors.New("select 3–256 polygon vertices, or 1–256 brush stroke points")
 	}
 	for _, p := range q.Points {
 		if !validNumber(p.X) || !validNumber(p.Y) || p.X < 0 || p.Y < 0 || p.X > float64(g.W) || p.Y > float64(g.H) {
 			return nil, nil, errors.New("selection lies outside the raster")
 		}
 	}
-	if q.Tool == "spike" && (len(q.Points) != 1 || q.Radius < 1 || q.Radius > 50) {
-		return nil, nil, errors.New("spike repair needs one location and a radius of 1–50 pixels")
+	if q.Tool == "spike" {
+		if q.Radius < 1 || q.Radius > 50 {
+			return nil, nil, errors.New("spike repair needs a brush radius of 1–50 pixels")
+		}
+		return selectBrushCells(g, q.Points, q.Radius)
 	}
 	minx, miny, maxx, maxy := float64(g.W), float64(g.H), 0.0, 0.0
-	if q.Tool == "spike" {
-		p := q.Points[0]
-		minx, maxx = p.X-float64(q.Radius), p.X+float64(q.Radius)
-		miny, maxy = p.Y-float64(q.Radius), p.Y+float64(q.Radius)
-	} else {
-		if len(q.Points) < 3 {
-			return nil, nil, errors.New("draw a polygon with at least three vertices")
-		}
-		area := 0.0
-		for i, a := range q.Points {
-			b := q.Points[(i+1)%len(q.Points)]
-			area += a.X*b.Y - b.X*a.Y
-			for j := i + 2; j < len(q.Points); j++ {
-				if i == 0 && j == len(q.Points)-1 {
-					continue
-				}
-				if segmentCross(a, b, q.Points[j], q.Points[(j+1)%len(q.Points)]) {
-					return nil, nil, errors.New("polygon edges cross; redraw the selection")
-				}
+	if len(q.Points) < 3 {
+		return nil, nil, errors.New("draw a polygon with at least three vertices")
+	}
+	area := 0.0
+	for i, a := range q.Points {
+		b := q.Points[(i+1)%len(q.Points)]
+		area += a.X*b.Y - b.X*a.Y
+		for j := i + 2; j < len(q.Points); j++ {
+			if i == 0 && j == len(q.Points)-1 {
+				continue
+			}
+			if segmentCross(a, b, q.Points[j], q.Points[(j+1)%len(q.Points)]) {
+				return nil, nil, errors.New("polygon edges cross; redraw the selection")
 			}
 		}
-		if math.Abs(area) < 1 {
-			return nil, nil, errors.New("polygon is too small")
-		}
-		for _, p := range q.Points {
-			minx = math.Min(minx, p.X)
-			maxx = math.Max(maxx, p.X)
-			miny = math.Min(miny, p.Y)
-			maxy = math.Max(maxy, p.Y)
-		}
+	}
+	if math.Abs(area) < 1 {
+		return nil, nil, errors.New("polygon is too small")
+	}
+	for _, p := range q.Points {
+		minx = math.Min(minx, p.X)
+		maxx = math.Max(maxx, p.X)
+		miny = math.Min(miny, p.Y)
+		maxy = math.Max(maxy, p.Y)
 	}
 	x0, y0 := max(0, int(math.Floor(minx))), max(0, int(math.Floor(miny)))
 	x1, y1 := min(g.W-1, int(math.Ceil(maxx))), min(g.H-1, int(math.Ceil(maxy)))
@@ -158,13 +155,7 @@ func selectCells(g *Grid, q EditRequest) ([]int, map[int]bool, error) {
 	selected := map[int]bool{}
 	for y := y0; y <= y1; y++ {
 		for x := x0; x <= x1; x++ {
-			hit := false
-			if q.Tool == "spike" {
-				p := q.Points[0]
-				hit = math.Hypot(float64(x)+.5-p.X, float64(y)+.5-p.Y) <= float64(q.Radius)
-			} else {
-				hit = insidePolygon(float64(x)+.5, float64(y)+.5, q.Points)
-			}
+			hit := insidePolygon(float64(x)+.5, float64(y)+.5, q.Points)
 			if hit {
 				i := y*g.W + x
 				indices = append(indices, i)
@@ -303,6 +294,11 @@ func (s *studio) applyEdit(q EditRequest) error {
 		changes = append(changes, cellChange{i, old, value, r.Flags[i], float32(bits)})
 	}
 	if len(changes) == 0 {
+		if q.Tool == "spike" {
+			s.failure = ""
+			s.message = "No spikes exceeded the threshold in the brush area"
+			return nil
+		}
 		return errors.New("no cells changed; check the selection, spike threshold or NoData option")
 	}
 	rec := EditRecord{Tool: q.Tool, Cells: len(changes), Time: time.Now().UTC().Format(time.RFC3339), Changes: changes, Points: append([]CellPoint(nil), q.Points...), Radius: q.Radius, Threshold: q.Threshold}
@@ -322,6 +318,7 @@ func (s *studio) applyEdit(q EditRequest) error {
 	audit.Changes = nil
 	s.edits.Audit = append(s.edits.Audit, audit)
 	s.message = fmt.Sprintf("%s: %d cells edited", q.Tool, len(changes))
+	s.failure = ""
 	return nil
 }
 func (s *studio) commitChanges(rec EditRecord, forward bool) {

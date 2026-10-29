@@ -41,6 +41,9 @@ var styleCSS string
 //go:embed contours.js
 var contoursJS string
 
+//go:embed brush.js
+var brushJS string
+
 type studio struct {
 	sync.Mutex
 	grid         *Grid
@@ -211,7 +214,7 @@ func (s *studio) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == "GET" {
-		assets := map[string]struct{ body, kind string }{"/app.js": {appJS, "text/javascript"}, "/editor.js": {editorJS, "text/javascript"}, "/style.css": {styleCSS, "text/css"}, "/contours.js": {contoursJS, "text/javascript"}}
+		assets := map[string]struct{ body, kind string }{"/app.js": {appJS, "text/javascript"}, "/editor.js": {editorJS, "text/javascript"}, "/style.css": {styleCSS, "text/css"}, "/contours.js": {contoursJS, "text/javascript"}, "/brush.js": {brushJS, "text/javascript"}}
 		if a, ok := assets[r.URL.Path]; ok {
 			w.Header().Set("Content-Type", a.kind+"; charset=utf-8")
 			fmt.Fprint(w, a.body)

@@ -5,11 +5,18 @@ archive; its 20 existing Go tests passed before changes.
 
 ## Completed checks
 
-- **27 Go tests passed**, including seven new regressions for round-before-filter
+- **31 Go tests passed**, including the seven cartographic regressions for round-before-filter
   order, plateau-noise contours versus meaningful relief, water constraints
   through rounding/focal/regional filters and averaging, constraint history,
   source coverage/change measurements, invalid input/cancellation/empty surfaces,
   report export and invalidation after terrain changes.
+- Four brush regressions check continuous/sparse stroke coverage and circular
+  ends, overlapping/retraced strokes, high/low repairs with outside/NoData
+  protection, atomic Undo/Redo, thresholds/no-op feedback and work limits.
+- A browser brush regression uses an independent TIFF fixture to check the full
+  swept area, sparse mouse events, high/low spikes away from the stroke centre,
+  untouched outside/NoData cells, one Undo/Redo, Escape/pointer cancellation,
+  single-click footprint, stable view while painting and middle-button panning.
 - `go test -race ./...`, `go vet ./...`, and `go mod verify` passed.
 - Headless Chromium/Playwright exercised the real browser application: metre,
   international-foot, US-survey-foot and unspecified-unit preset values; contour
@@ -49,6 +56,7 @@ Playwright/Chromium and Python NumPy/Rasterio respectively:
 
 ```sh
 node cartographic_check.mjs
+node brush_check.mjs
 python fixture_check.py
 ```
 

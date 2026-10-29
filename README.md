@@ -173,10 +173,22 @@ Use **Open DTM** to edit existing terrain without running extraction. Alternativ
 load a DSM and run extraction, or explicitly choose **Use input as editable DTM**.
 The source raster and cleaned DSM remain unchanged during manual editing.
 
-* **Repair spikes:** click a circular area (radius 1–50 source pixels). Each valid
-  selected cell is compared with its surrounding 5×5 median (excluding itself).
-  Replace deviations above the specified absolute threshold. This repairs both
-  high and low spikes. A threshold of zero repairs all differing selected cells.
+* **Repair spikes:** click for a circular brush, or hold the left mouse button
+  and drag to paint a larger area (radius 1–50 source pixels). The translucent
+  overlay shows the selected footprint; release to apply. Every valid covered
+  cell is compared with its pre-stroke 5×5 neighbourhood median (excluding itself)
+  and replaced only if its absolute deviation exceeds the threshold. Both high
+  and low spikes are repaired; 0 repairs all differing covered cells. The brush
+  includes the full path between mouse events, overlapping passes visit cells
+  once, and cells outside its footprint remain unchanged. NoData is skipped.
+  One completed stroke is one Undo/Redo action. Escape, pointer cancellation or
+  losing window focus cancels the uncommitted stroke. Middle-drag still pans;
+  zooming is paused during painting to keep the selected footprint stable.
+  No-op strokes report that no spikes exceeded the threshold without creating
+  an undo entry. Stroke centres are clipped to raster bounds. Strokes are limited
+  to 256 path points and 250,000 selected cells;
+  excessively large strokes are rejected without partial changes. This is local
+  spike repair, not removal of broad raised objects or recovery of unknown ground.
 * **Hydroflatten:** click polygon vertices, enter a known water-surface elevation,
   then **Apply selection**. All selected valid cells become exactly that height.
   Identify a source cell and choose **Use identified DTM elevation** to copy a level.
@@ -191,7 +203,7 @@ The source raster and cleaned DSM remain unchanged during manual editing.
 Polygon selections are drawn in source-cell coordinates. Double-click/Enter closes
 the outline; **Apply** commits it. Escape/Clear removes only the selection. Use a
 middle-button drag to pan while an edit tool is active. Edits are limited to 250,000
-source cells per action and a 2-million-cell selection bounding box; self-crossing
+source cells per action. Polygon selections also have a 2-million-cell bounding-box limit; self-crossing
 polygons are rejected. Preview imagery is downsampled, so zooming enlarges the
 preview while source-cell calculations remain at the input resolution.
 
