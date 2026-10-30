@@ -6,11 +6,11 @@ function featureRingsForApply(){return [...featureRings,...(polygon.length?[poly
 function updateFeatureSelection(){
  const rings=featureRingsForApply(),vertices=rings.reduce((n,r)=>n+r.length,0),valid=activeTool==='breakline'?polygon.length>=2:rings.length>0&&rings.every(r=>r.length>=3);
  $('selectionInfo').textContent=vertices?`${vertices} vertices${activeTool==='waterbody'?` · ${Math.max(0,rings.length-1)} island rings`:''} · ${polygonClosed?'ready':'drawing'}`:'No selection';
- $('applySelection').disabled=editingPending||!state.complete||state.busy||!valid;
- $('addIslandRing').disabled=editingPending||activeTool!=='waterbody'||polygon.length<3||featureRings.length>=16;
+ $('applySelection').disabled=editingPending||uploading||!state.complete||state.busy||!valid;
+ $('addIslandRing').disabled=editingPending||uploading||state.busy||activeTool!=='waterbody'||polygon.length<3||featureRings.length>=16;
 }
 $('addIslandRing').onclick=()=>{
- if(activeTool!=='waterbody'||polygon.length<3)return;
+ if(editingPending||uploading||state.busy||activeTool!=='waterbody'||polygon.length<3)return;
  featureRings.push(polygon.map(p=>({...p})));polygon=[];polygonClosed=false;updateSelection();draw();
 };
 $('breaklineMode').onchange=()=>{$('gradeOptions').hidden=$('breaklineMode').value==='preserve'};
@@ -40,17 +40,17 @@ async function applyDrawnTerrainFeature(){
  }catch(e){fail(e)}finally{editingPending=false;updateGIS(state);draw()}
 }
 async function removeDrawnTerrainFeature(id){
- if(editingPending||state.busy)return;editingPending=true;actionEpoch++;clearError();updateGIS(state);
+ if(editingPending||state.busy||uploading)return;editingPending=true;actionEpoch++;clearError();updateGIS(state);
  try{update(await(await api('terrain-features/remove',{method:'POST',body:JSON.stringify({id,revision:state.editing.revision})})).json());await refreshImages()}
  catch(e){fail(e)}finally{editingPending=false;updateGIS(state);draw()}
 }
 function updateTerrainFeatures(s){
- const summaries=s.terrainFeatures||[],key=JSON.stringify(summaries)+!!editingPending+!!s.busy;
+ const summaries=s.terrainFeatures||[],key=JSON.stringify(summaries)+!!editingPending+!!s.busy+!!uploading;
  if(key!==featureListKey){
   featureListKey=key;
   const items=summaries.map(f=>{const row=document.createElement('div'),text=document.createElement('p'),button=document.createElement('button');
    text.textContent=`#${f.id} ${f.kind} · ${f.mode} · ${f.cells.toLocaleString()} protected cells`;
-   button.textContent=`Remove #${f.id}`;button.disabled=editingPending||s.busy;button.onclick=()=>removeDrawnTerrainFeature(f.id);row.append(text,button);return row});
+   button.textContent=`Remove #${f.id}`;button.disabled=editingPending||s.busy||uploading;button.onclick=()=>removeDrawnTerrainFeature(f.id);row.append(text,button);return row});
   if(items.length)$('terrainFeatureList').replaceChildren(...items);else $('terrainFeatureList').textContent='No protected breaklines or waterbodies.';
  }
  if(featureSourceVersion!==version){featureSourceVersion=version;featureFetchKey='';terrainFeatureData=[];featurePaths=[];featureFetchToken++;resetFeatureDraft()}

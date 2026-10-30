@@ -5,7 +5,9 @@ archive; its 20 existing Go tests passed before changes.
 
 ## Completed checks
 
-- **49 Go tests passed**, including the seven cartographic regressions for round-before-filter
+- Bug-review regressions reject backtracking breaklines atomically, block edits during raster replacement, and clear the previous contour overlay when a new raster loads.
+
+- **50 Go tests passed**, including the seven cartographic regressions for round-before-filter
   order, plateau-noise contours versus meaningful relief, water constraints
   through rounding/focal/regional filters and averaging, constraint history,
   source coverage/change measurements, invalid input/cancellation/empty surfaces,
@@ -185,6 +187,7 @@ node cartographic_check.mjs
 node brush_check.mjs
 node live_contours_check.mjs
 node ui_performance_check.mjs
+node bug_review_check.mjs
 node constrained_terrain_check.mjs
 python geopackage_check.py
 python constrained_terrain_gis_check.py

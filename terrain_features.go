@@ -162,7 +162,7 @@ func (s *studio) applyTerrainFeature(q TerrainFeatureRequest) error {
 					return errors.New("breakline crosses or touches itself; split it into separate features")
 				}
 			}
-			if i+1 < len(q.Points) && pointOnSegment(q.Points[i+1], q.Points[i-1], q.Points[i]) {
+			if i+1 < len(q.Points) && (pointOnSegment(q.Points[i+1], q.Points[i-1], q.Points[i]) || pointOnSegment(q.Points[i-1], q.Points[i], q.Points[i+1])) {
 				return errors.New("breakline doubles back; redraw its vertices")
 			}
 		}

@@ -4,6 +4,7 @@ let brushStroke = null;
 function brushActive() { return brushStroke !== null; }
 
 function beginBrushStroke(e, point) {
+  if (editingPending || uploading || state.busy || !state.complete) return;
   const radius = Number($('brushRadius').value);
   const threshold = Number($('editThreshold').value);
   if (!Number.isInteger(radius) || radius < 1 || radius > 50 ||

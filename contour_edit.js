@@ -1,6 +1,7 @@
 let contourDrag=null,pinListKey='';
 function contourDragActive(){return contourDrag!==null}
 function beginContourDrag(e,p){
+ if(editingPending||uploading||state.busy)return;
  if(!contourData||state.contourBusy||contourData.revision!==state.editing?.revision||contourData.generation!==state.contours?.generation){fail('Wait for current contours, then drag a contour handle.');return}
  if(contourData.parameters.averageFactor!==1){fail('Set block average factor to 1 before moving/pinning a contour.');return}
  const radius=Number($('contourPinRadius').value);
@@ -46,13 +47,13 @@ function drawContourPins(ctx,g){
  ctx.restore();
 }
 function updateContourPins(s){
- const pins=s.constraints||[],key=JSON.stringify(pins)+!!editingPending+!!s.busy;
+ const pins=s.constraints||[],key=JSON.stringify(pins)+!!editingPending+!!s.busy+!!uploading;
  if(key===pinListKey)return;pinListKey=key;
- const items=pins.map(pin=>{const button=document.createElement('button');button.className='full';button.textContent=`Remove pin #${pin.id} · height ${pin.elevation.toPrecision(6)}`;button.disabled=editingPending||s.busy;button.onclick=()=>removeContourPin(pin.id);return button});
+ const items=pins.map(pin=>{const button=document.createElement('button');button.className='full';button.textContent=`Remove pin #${pin.id} · height ${pin.elevation.toPrecision(6)}`;button.disabled=editingPending||s.busy||uploading;button.onclick=()=>removeContourPin(pin.id);return button});
  if(!items.length)$('constraintList').textContent='No contour elevation pins.';else $('constraintList').replaceChildren(...items);
 }
 async function removeContourPin(id){
- if(editingPending||state.busy)return;editingPending=true;actionEpoch++;clearError();updateGIS(state);
+ if(editingPending||state.busy||uploading)return;editingPending=true;actionEpoch++;clearError();updateGIS(state);
  try{update(await(await api('contours/unpin',{method:'POST',body:JSON.stringify({id,revision:state.editing.revision})})).json());await refreshImages()}
  catch(e){fail(e)}finally{editingPending=false;updateGIS(state);draw()}
 }

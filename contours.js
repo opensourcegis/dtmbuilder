@@ -22,7 +22,11 @@ function updateContours(s){
  const hardFeatures=(s.terrainFeatures||[]).length>0;
  if(hardFeatures&&(Number($('contourAverage').value)!==1||Number($('contourSmooth').value)!==0||Number($('regionalRadius').value)!==0))useConstrainedSurfaceSettings();
  for(const option of $('contourPreset').options)option.disabled=hardFeatures&&!['constrained','custom'].includes(option.value);
- if(s.raster&&contourSource!==version){contourSource=version;if($('contourPreset').value==='normal'){$('contourMinArea').value=s.raster.areaFilterAvailable?50:0;contourAttempt=''}}
+ if(s.raster&&contourSource!==version){
+  contourSource=version;contourFetchAbort?.abort();contourFetchToken++;contourFetchKey='';contourAttempt='';
+  clearTimeout(contourTimer?.id);contourTimer=null;contourData=null;contourPaths=[];draw();
+  if($('contourPreset').value==='normal')$('contourMinArea').value=s.raster.areaFilterAvailable?50:0;
+ }
  $('areaFilterHint').textContent=s.raster&&!s.raster.areaFilterAvailable?'Square-metre filtering requires recognized projected metre/foot coordinates. The Normal preset keeps all loops for this raster.':'Closed loops below the chosen minimum area are omitted from display and export. Open lines remain. Set 0 to disable.';
  const blocked=s.busy||!s.complete||editingPending||contourStarting||uploading;
  const exportBlocked=blocked||s.contourBusy||!s.contours||s.contours.revision!==s.editing?.revision;

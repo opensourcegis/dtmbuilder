@@ -216,3 +216,22 @@ func TestTerrainFeatureAuditPayloadAndHistoryBranch(t *testing.T) {
 		t.Fatal("averaging silently cropped a protected edge sample")
 	}
 }
+
+func TestBreaklineRejectsAdjacentBacktracking(t *testing.T) {
+	for _, points := range [][]CellPoint{
+		{{10, 10}, {20, 10}, {5, 10}},
+		{{10, 10}, {20, 20}, {5, 5}},
+		{{10, 10}, {20, 10}, {15, 10}},
+	} {
+		s := terrainFeatureFixture()
+		original := s.result
+		err := s.applyTerrainFeature(TerrainFeatureRequest{Kind: "breakline", Mode: "grade", Points: points, Radius: 1, Elevation: 25, EndElevation: 20})
+		if err == nil || s.result != original || s.edits.Revision != 0 || len(s.terrainFeatures) != 0 {
+			t.Fatalf("backtracking breakline must fail without modifying terrain: %v, error %v", points, err)
+		}
+	}
+	s := terrainFeatureFixture()
+	if err := s.applyTerrainFeature(TerrainFeatureRequest{Kind: "breakline", Mode: "preserve", Points: []CellPoint{{5, 10}, {10, 10}, {20, 10}}, Radius: 1}); err != nil {
+		t.Fatalf("straight continuation must remain valid: %v", err)
+	}
+}
